@@ -7,6 +7,18 @@ from sqlalchemy.orm import Session
 from ai_radar.models import SourceConfig, SourceItem
 
 
+def source_display_state(source: SourceConfig) -> tuple[str, str, str]:
+    """Return visible list copy, emoji, and style token for a source."""
+    test_status = source.test_status or "UNTESTED"
+    if test_status == "FAILED":
+        return "连接异常", "❌", "failed"
+    if test_status != "PASSED":
+        return "待测试", "⚪", "untested"
+    if source.enabled:
+        return "采集中", "✅", "collecting"
+    return "已停用", "⛔", "stopped"
+
+
 class SourceService:
     """Edit and remove source configurations with predictable side effects."""
 

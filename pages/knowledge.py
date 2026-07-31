@@ -12,9 +12,12 @@ from ai_radar import orchestrator
 from ai_radar.database import session_scope
 from ai_radar.models import (
     ChangePoint,
+    ChangePointSource,
     KnowledgeCoverage,
     ProfileFact,
     ProfileSourceFile,
+    SourceConfig,
+    SourceItem,
     Topic,
 )
 from ai_radar.ui import (
@@ -73,6 +76,7 @@ def render() -> None:
 
     target_id = _query_int("change_point")
     query_topic = _query_int("topic")
+    query_source = _query_int("source")
     query_signals = [
         value
         for value in st.query_params.get("signals", "").split(",")
@@ -89,8 +93,15 @@ def render() -> None:
             session.execute(select(Topic).order_by(Topic.id)).scalars()
         )
         topic_names = {topic.id: topic.name for topic in topics}
+        sources = list(
+            session.execute(
+                select(SourceConfig).order_by(SourceConfig.name)
+            ).scalars()
+        )
+        source_names = {source.id: source.name for source in sources}
 
         topic_options = [None] + [topic.id for topic in topics]
+        source_options = [None] + [source.id for source in sources]
         level_options = [
             None,
             "GAP",
@@ -105,6 +116,7 @@ def render() -> None:
         query_signature = (
             target_id,
             query_topic,
+            query_source,
             tuple(query_signals),
             query_coverage,
             query_importance,
@@ -115,6 +127,9 @@ def render() -> None:
             st.session_state["_knowledge_query_signature"] = query_signature
             st.session_state["knowledge_topic"] = (
                 query_topic if query_topic in topic_options else None
+            )
+            st.session_state["knowledge_source"] = (
+                query_source if query_source in source_options else None
             )
             st.session_state["knowledge_level"] = (
                 query_coverage if query_coverage in level_options else None
@@ -130,8 +145,8 @@ def render() -> None:
             )
             st.session_state["knowledge_keyword"] = query_keyword
 
-        filters = st.columns([1.15, 1.2, 1, 1.6, 1, 1.7])
-        selected_topic = filters[0].selectbox(
+        primary_filters = st.columns([1.3, 1.5, 1.2, 1])
+        selected_topic = primary_filters[0].selectbox(
             "领域",
             topic_options,
             format_func=lambda value: "全部领域"
@@ -139,7 +154,15 @@ def render() -> None:
             else topic_names[value],
             key="knowledge_topic",
         )
-        selected_level = filters[1].selectbox(
+        selected_source = primary_filters[1].selectbox(
+            "资讯源",
+            source_options,
+            format_func=lambda value: "全部资讯源"
+            if value is None
+            else source_names[value],
+            key="knowledge_source",
+        )
+        selected_level = primary_filters[2].selectbox(
             "当前覆盖",
             level_options,
             format_func=lambda value: "全部等级"
@@ -149,20 +172,21 @@ def render() -> None:
             else LEVEL_LABEL[value],
             key="knowledge_level",
         )
-        selected_importance = filters[2].selectbox(
+        selected_importance = primary_filters[3].selectbox(
             "最低重要度",
             importance_options,
             format_func=lambda value: "全部" if value is None else str(value),
             key="knowledge_importance",
         )
-        selected_signals = filters[3].multiselect(
+        secondary_filters = st.columns([1.8, 1, 1.8])
+        selected_signals = secondary_filters[0].multiselect(
             "信号类型",
             signal_options,
             format_func=signal_type_label,
             placeholder="全部类型",
             key="knowledge_signals",
         )
-        selected_period = filters[4].selectbox(
+        selected_period = secondary_filters[1].selectbox(
             "发现时间",
             period_options,
             format_func=lambda value: {
@@ -172,13 +196,14 @@ def render() -> None:
             }[value],
             key="knowledge_period",
         )
-        keyword = filters[5].text_input(
+        keyword = secondary_filters[2].text_input(
             "搜索知识变化",
             key="knowledge_keyword",
         )
         if target_id is None:
             _sync_filter_query(
                 selected_topic=selected_topic,
+                selected_source=selected_source,
                 selected_level=selected_level,
                 selected_importance=selected_importance,
                 selected_signals=selected_signals,
@@ -191,6 +216,17 @@ def render() -> None:
             stmt = stmt.where(ChangePoint.id == target_id)
         elif selected_topic is not None:
             stmt = stmt.where(ChangePoint.topic_id == selected_topic)
+        if target_id is None and selected_source is not None:
+            stmt = stmt.where(
+                ChangePoint.id.in_(
+                    select(ChangePointSource.change_point_id)
+                    .join(
+                        SourceItem,
+                        SourceItem.id == ChangePointSource.source_item_id,
+                    )
+                    .where(SourceItem.source_config_id == selected_source)
+                )
+            )
         if selected_importance is not None:
             stmt = stmt.where(ChangePoint.importance >= selected_importance)
         if selected_signals:
@@ -288,6 +324,7 @@ def render() -> None:
             group_filter_signature = (
                 target_id,
                 selected_topic,
+                selected_source,
                 selected_level,
                 selected_importance,
                 tuple(selected_signals),
@@ -612,6 +649,7 @@ def _query_int(key: str) -> int | None:
 def _sync_filter_query(
     *,
     selected_topic: int | None,
+    selected_source: int | None,
     selected_level: str | None,
     selected_importance: int | None,
     selected_signals: list[str],
@@ -620,6 +658,7 @@ def _sync_filter_query(
 ) -> None:
     managed_keys = {
         "topic",
+        "source",
         "coverage",
         "importance_min",
         "signals",
@@ -630,6 +669,7 @@ def _sync_filter_query(
         key: value
         for key, value in {
             "topic": str(selected_topic) if selected_topic is not None else "",
+            "source": str(selected_source) if selected_source is not None else "",
             "coverage": selected_level or "",
             "importance_min": str(selected_importance)
             if selected_importance is not None
@@ -656,6 +696,7 @@ def _sync_filter_query(
     st.session_state["_knowledge_query_signature"] = (
         None,
         selected_topic,
+        selected_source,
         tuple(selected_signals),
         selected_level,
         selected_importance,

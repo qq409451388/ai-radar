@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from ai_radar import orchestrator
 from ai_radar.database import session_scope
 from ai_radar.models import SourceConfig, Topic
-from ai_radar.services.source_service import SourceService
+from ai_radar.services.source_service import SourceService, source_display_state
 from ai_radar.ui import fmt_dt
 
 
@@ -193,7 +193,9 @@ def _render_sources() -> None:
             test_status,
             TEST_LABELS["UNTESTED"],
         )
-        collection_status, state_icon, state_class = _source_state(source)
+        collection_status, state_icon, state_class = source_display_state(
+            source
+        )
         summary = (
             f"{state_icon}　{source.name}　·　"
             f"{TYPE_LABELS.get(source.source_type, source.source_type)}　·　"
@@ -243,17 +245,6 @@ def _render_sources() -> None:
                 _render_delete_source(source)
             else:
                 _render_source_actions(source, test_status)
-
-
-def _source_state(source: SourceConfig) -> tuple[str, str, str]:
-    test_status = source.test_status or "UNTESTED"
-    if test_status == "FAILED":
-        return "连接异常", "❌", "failed"
-    if test_status != "PASSED":
-        return "待测试", "⚪", "untested"
-    if source.enabled:
-        return "采集中", "✅", "collecting"
-    return "已停用", "⛔", "stopped"
 
 
 def _render_source_actions(source: SourceConfig, test_status: str) -> None:

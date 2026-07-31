@@ -15,7 +15,12 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select
 
-from ai_radar.bootstrap import ANALYZE_FAILED, ANALYZE_PENDING
+from ai_radar.bootstrap import (
+    ANALYZE_FAILED,
+    ANALYZE_IGNORED,
+    ANALYZE_PENDING,
+    ANALYZE_SUCCESS,
+)
 from ai_radar.config import get_config
 from ai_radar.database import session_scope
 from ai_radar.llm.client import LlmClient
@@ -148,19 +153,7 @@ def analyze_pending_items(
         rows = list(
             session.execute(
                 select(SourceItem.id, SourceItem.title)
-                .where(
-                    or_(
-                        SourceItem.analyze_status == ANALYZE_PENDING,
-                        and_(
-                            SourceItem.analyze_status == ANALYZE_FAILED,
-                            SourceItem.retry_count < 3,
-                            or_(
-                                SourceItem.next_retry_at.is_(None),
-                                SourceItem.next_retry_at <= now,
-                            ),
-                        ),
-                    )
-                )
+                .where(_analyzable_item_filter(now))
                 .order_by(
                     SourceItem.published_at.desc().nullslast(),
                     SourceItem.collected_at.desc(),
@@ -341,21 +334,34 @@ def _count_analyzable_items() -> int:
         return int(
             session.scalar(
                 select(func.count(SourceItem.id)).where(
-                    or_(
-                        SourceItem.analyze_status == ANALYZE_PENDING,
-                        and_(
-                            SourceItem.analyze_status == ANALYZE_FAILED,
-                            SourceItem.retry_count < 3,
-                            or_(
-                                SourceItem.next_retry_at.is_(None),
-                                SourceItem.next_retry_at <= now,
-                            ),
-                        ),
-                    )
+                    _analyzable_item_filter(now)
                 )
             )
             or 0
         )
+
+
+def _analyzable_item_filter(now: datetime):
+    retry_ready = or_(
+        SourceItem.next_retry_at.is_(None),
+        SourceItem.next_retry_at <= now,
+    )
+    return or_(
+        SourceItem.analyze_status == ANALYZE_PENDING,
+        and_(
+            SourceItem.analyze_status == ANALYZE_FAILED,
+            SourceItem.retry_count < 3,
+            retry_ready,
+        ),
+        and_(
+            SourceItem.analyze_status.in_(
+                [ANALYZE_SUCCESS, ANALYZE_IGNORED]
+            ),
+            SourceItem.display_language != get_config().content_language,
+            SourceItem.retry_count < 3,
+            retry_ready,
+        ),
+    )
 
 
 def sync_profile(progress_callback: ProgressCallback | None = None) -> dict:

@@ -74,8 +74,8 @@ class DedupService:
             self.session.flush()
             existing = cp
         else:
-            # Merge: keep the highest importance, refresh last_seen, accumulate
-            # summary text if the new one is meaningfully different.
+            # Merge: keep priority while refreshing user-facing copy. This lets
+            # a language-preference change replace older foreign-language text.
             if importance > existing.importance:
                 existing.importance = importance
             if SIGNAL_PRIORITY.get(signal_type, 0) > SIGNAL_PRIORITY.get(
@@ -83,17 +83,12 @@ class DedupService:
                 0,
             ):
                 existing.signal_type = signal_type
-            if title and not existing.title:
+            if title:
                 existing.title = title
-            if why_it_matters and not existing.why_it_matters:
+            if why_it_matters:
                 existing.why_it_matters = why_it_matters
-            if summary and summary not in existing.summary:
-                combined = (
-                    (existing.summary + "\n" + summary).strip()
-                    if existing.summary
-                    else summary
-                )
-                existing.summary = compact_text(combined, 300)
+            if summary:
+                existing.summary = compact_text(summary, 300)
             existing.last_seen_at = datetime.now(timezone.utc)
             if topic_id and not existing.topic_id:
                 existing.topic_id = topic_id

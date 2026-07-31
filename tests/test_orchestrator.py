@@ -88,3 +88,73 @@ def test_analyze_all_pending_items_drains_queue_in_batches(
     finally:
         reset_config()
         database.reset_engine()
+
+
+def test_full_analysis_refreshes_items_in_an_old_display_language(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("AI_RADAR_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("AI_RADAR_DB_PATH", str(tmp_path / "radar.db"))
+    monkeypatch.setenv("AI_RADAR_SCHEDULER_ENABLED", "false")
+
+    from ai_radar import database, orchestrator
+    from ai_radar.config import reset_config
+    from ai_radar.database import session_scope
+    from ai_radar.llm.schemas import ChangePointAnalysis
+    from ai_radar.models import SourceConfig, SourceItem
+    from ai_radar.services.analysis_service import AnalysisService
+
+    reset_config()
+    database.reset_engine()
+    database.init_db()
+    try:
+        with session_scope() as session:
+            source = SourceConfig(
+                name="test",
+                source_type="RSS",
+                url="https://example.com/feed",
+                enabled=True,
+            )
+            session.add(source)
+            session.flush()
+            item = SourceItem(
+                source_config_id=source.id,
+                external_id="localized",
+                title="English title",
+                display_title="English title",
+                display_summary="English summary",
+                display_language="en",
+                content_hash="localized-hash",
+                analyze_status="SUCCESS",
+            )
+            session.add(item)
+            session.flush()
+            item_id = item.id
+
+        monkeypatch.setattr(
+            AnalysisService,
+            "request_analysis",
+            lambda _service, _item: ChangePointAnalysis(
+                relevant=True,
+                event_key="localized-event",
+                title="中文标题",
+                summary="中文摘要",
+                importance=3,
+            ),
+        )
+
+        result = orchestrator.analyze_all_pending_items(batch_size=10)
+
+        assert result["processed"] == 1
+        assert result["remaining_pending"] == 0
+        with session_scope() as session:
+            item = session.get(SourceItem, item_id)
+            assert item is not None
+            assert item.analyze_status == "SUCCESS"
+            assert item.display_title == "中文标题"
+            assert item.display_summary == "中文摘要"
+            assert item.display_language == "zh-CN"
+    finally:
+        reset_config()
+        database.reset_engine()

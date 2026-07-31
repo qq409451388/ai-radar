@@ -10,7 +10,7 @@ from ai_radar.models import (
     SourceItem,
     Topic,
 )
-from ai_radar.services.source_service import SourceService
+from ai_radar.services.source_service import SourceService, source_display_state
 
 
 def _source(session) -> SourceConfig:
@@ -26,6 +26,36 @@ def _source(session) -> SourceConfig:
     session.add(source)
     session.flush()
     return source
+
+
+def test_source_list_states_use_visible_colored_icons(session):
+    source = _source(session)
+    assert source_display_state(source) == (
+        "采集中",
+        "✅",
+        "collecting",
+    )
+
+    source.enabled = False
+    assert source_display_state(source) == (
+        "已停用",
+        "⛔",
+        "stopped",
+    )
+
+    source.test_status = "UNTESTED"
+    assert source_display_state(source) == (
+        "待测试",
+        "⚪",
+        "untested",
+    )
+
+    source.test_status = "FAILED"
+    assert source_display_state(source) == (
+        "连接异常",
+        "❌",
+        "failed",
+    )
 
 
 def test_editing_connection_fields_requires_a_new_test(session):

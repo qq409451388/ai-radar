@@ -42,19 +42,7 @@ class AnalysisService:
         batch_size = limit or get_config().analyze_batch_size
         stmt = (
             select(SourceItem)
-            .where(
-                or_(
-                    SourceItem.analyze_status == ANALYZE_PENDING,
-                    and_(
-                        SourceItem.analyze_status == ANALYZE_FAILED,
-                        SourceItem.retry_count < 3,
-                        or_(
-                            SourceItem.next_retry_at.is_(None),
-                            SourceItem.next_retry_at <= now,
-                        ),
-                    ),
-                )
-            )
+            .where(_analyzable_item_filter(now))
             .order_by(
                 SourceItem.published_at.desc().nullslast(),
                 SourceItem.collected_at.desc(),
@@ -190,7 +178,9 @@ class AnalysisService:
         now: datetime | None = None,
     ) -> dict:
         failed_at = now or datetime.now(timezone.utc)
-        item.analyze_status = ANALYZE_FAILED
+        previous_status = item.analyze_status
+        if previous_status not in (ANALYZE_SUCCESS, ANALYZE_IGNORED):
+            item.analyze_status = ANALYZE_FAILED
         item.analyze_error = (
             str(exc)
             if isinstance(exc, LlmError)
@@ -263,13 +253,13 @@ class AnalysisService:
     def _apply_display_copy(self, item: SourceItem, analysis) -> None:
         language = get_config().content_language
         title = (
-            analysis.title.strip()
+            str(getattr(analysis, "title", "") or "").strip()
             or item.display_title.strip()
             or item.title.strip()
             or f"资讯 #{item.id}"
         )
         summary = (
-            analysis.summary.strip()
+            str(getattr(analysis, "summary", "") or "").strip()
             or item.display_summary.strip()
             or (item.raw_content or "").strip()
             or title
@@ -287,6 +277,29 @@ class AnalysisService:
                 return topic.id
         # Fall back to the source's default topic.
         return source.default_topic_id if source else None
+
+
+def _analyzable_item_filter(now: datetime):
+    retry_ready = or_(
+        SourceItem.next_retry_at.is_(None),
+        SourceItem.next_retry_at <= now,
+    )
+    return or_(
+        SourceItem.analyze_status == ANALYZE_PENDING,
+        and_(
+            SourceItem.analyze_status == ANALYZE_FAILED,
+            SourceItem.retry_count < 3,
+            retry_ready,
+        ),
+        and_(
+            SourceItem.analyze_status.in_(
+                [ANALYZE_SUCCESS, ANALYZE_IGNORED]
+            ),
+            SourceItem.display_language != get_config().content_language,
+            SourceItem.retry_count < 3,
+            retry_ready,
+        ),
+    )
 
 
 def _parse_date(value: str | None):

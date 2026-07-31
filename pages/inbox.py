@@ -52,6 +52,7 @@ def render() -> None:
         query_view = "design"
     query_period = st.query_params.get("period")
     query_topic = _query_int("topic")
+    query_source = _query_int("source")
     query_signals = [
         value
         for value in st.query_params.get("signals", "").split(",")
@@ -150,18 +151,23 @@ def render() -> None:
             design_only=True,
             query_period=query_period,
             query_topic=query_topic,
+            query_source=query_source,
             query_signals=query_signals,
         )
     elif selected_view == "changes":
         _render_changes(
             query_period=query_period,
             query_topic=query_topic,
+            query_source=query_source,
             query_signals=query_signals,
         )
     elif selected_view == "queue":
-        _render_items(statuses=["PENDING"])
+        _render_items(statuses=["PENDING"], query_source=query_source)
     else:
-        _render_items(statuses=["SUCCESS", "IGNORED", "FAILED"])
+        _render_items(
+            statuses=["SUCCESS", "IGNORED", "FAILED"],
+            query_source=query_source,
+        )
 
 
 def _render_changes(
@@ -169,6 +175,7 @@ def _render_changes(
     *,
     query_period: str | None = None,
     query_topic: int | None = None,
+    query_source: int | None = None,
     query_signals: list[str] | None = None,
 ) -> None:
     view_key = "design" if design_only else "all"
@@ -184,6 +191,7 @@ def _render_changes(
         source_types = {
             source.id: source.source_type for source in configured_sources
         }
+        source_options = [None] + [source.id for source in configured_sources]
         topic_options = [None] + [topic.id for topic in topics]
         signal_options = [
             "STANDARD",
@@ -199,6 +207,7 @@ def _render_changes(
         state_signature = (
             query_period,
             query_topic,
+            query_source,
             tuple(query_signals or []),
         )
         signature_key = f"_inbox_query_signature_{view_key}"
@@ -208,19 +217,22 @@ def _render_changes(
             st.session_state[f"inbox_change_topic_{view_key}"] = (
                 query_topic if query_topic in topic_options else None
             )
+            st.session_state[f"inbox_change_source_{view_key}"] = (
+                query_source if query_source in source_options else None
+            )
             st.session_state[f"inbox_change_signals_{view_key}"] = [
                 value
                 for value in (query_signals or [])
                 if value in signal_options
             ]
 
-        filter_cols = st.columns([1.1, 1.35, 2])
-        range_label = filter_cols[0].segmented_control(
+        primary_filters = st.columns([1.1, 1.35, 1.55])
+        range_label = primary_filters[0].segmented_control(
             "时间范围",
             ["7 天", "30 天", "全部"],
             key=f"inbox_change_range_{view_key}",
         )
-        selected_topic = filter_cols[1].selectbox(
+        selected_topic = primary_filters[1].selectbox(
             "领域",
             topic_options,
             format_func=lambda value: "全部领域"
@@ -228,7 +240,15 @@ def _render_changes(
             else topic_names[value],
             key=f"inbox_change_topic_{view_key}",
         )
-        selected_signals = filter_cols[2].multiselect(
+        selected_source = primary_filters[2].selectbox(
+            "资讯源",
+            source_options,
+            format_func=lambda value: "全部资讯源"
+            if value is None
+            else source_names[value],
+            key=f"inbox_change_source_{view_key}",
+        )
+        selected_signals = st.multiselect(
             "信号类型",
             signal_options,
             format_func=signal_type_label,
@@ -254,12 +274,24 @@ def _render_changes(
             stmt = stmt.where(ChangePoint.signal_type.in_(DESIGN_SIGNAL_TYPES))
         if selected_topic is not None:
             stmt = stmt.where(ChangePoint.topic_id == selected_topic)
+        if selected_source is not None:
+            stmt = stmt.where(
+                ChangePoint.id.in_(
+                    select(ChangePointSource.change_point_id)
+                    .join(
+                        SourceItem,
+                        SourceItem.id == ChangePointSource.source_item_id,
+                    )
+                    .where(SourceItem.source_config_id == selected_source)
+                )
+            )
         if selected_signals:
             stmt = stmt.where(ChangePoint.signal_type.in_(selected_signals))
 
         filter_signature = (
             range_label,
             selected_topic,
+            selected_source,
             tuple(selected_signals),
         )
         page_key = f"inbox_change_page_{view_key}"
@@ -356,7 +388,11 @@ def _render_changes(
                     )
 
 
-def _render_items(statuses: list[str]) -> None:
+def _render_items(
+    statuses: list[str],
+    *,
+    query_source: int | None = None,
+) -> None:
     view_key = "queue" if statuses == ["PENDING"] else "done"
     with session_scope() as session:
         sources = list(
@@ -364,6 +400,7 @@ def _render_items(statuses: list[str]) -> None:
         )
         source_names = {source.id: source.name for source in sources}
         source_types = {source.id: source.source_type for source in sources}
+        source_options = [None] + [source.id for source in sources]
         status_counts = dict(
             session.execute(
                 select(
@@ -411,10 +448,17 @@ def _render_items(statuses: list[str]) -> None:
                 "归档只改变处理状态，不删除原始资讯。"
             )
 
+        source_query_key = f"_inbox_item_source_query_{view_key}"
+        if st.session_state.get(source_query_key) != query_source:
+            st.session_state[source_query_key] = query_source
+            st.session_state[f"inbox_source_{view_key}"] = (
+                query_source if query_source in source_options else None
+            )
+
         filter_cols = st.columns([1.5, 3.5])
         selected_source = filter_cols[0].selectbox(
             "来源",
-            [None] + [source.id for source in sources],
+            source_options,
             format_func=lambda value: "全部来源"
             if value is None
             else source_names[value],
