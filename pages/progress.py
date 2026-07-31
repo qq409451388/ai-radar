@@ -16,6 +16,7 @@ from ai_radar.models import (
     ProfileSourceFile,
     Topic,
 )
+from ai_radar.services.scoring_service import ScoringService
 from ai_radar.ui import fmt_dt
 
 EVIDENCE_LABEL = {
@@ -30,6 +31,7 @@ EVIDENCE_LABEL = {
 
 
 def render() -> None:
+    query_topic = _query_int("topic")
     st.markdown('<div class="page-kicker">Personal progress</div>', unsafe_allow_html=True)
     st.title("我的进展")
     st.markdown(
@@ -57,6 +59,7 @@ def render() -> None:
     with session_scope() as session:
         topics = list(session.execute(select(Topic).order_by(Topic.id)).scalars())
         topic_names = {topic.id: topic.name for topic in topics}
+        topic_health = ScoringService(session).compute_all_topic_health()
         facts = list(
             session.execute(
                 select(ProfileFact)
@@ -100,6 +103,36 @@ def render() -> None:
             ["进展概览", "事实证据", "同步文件"]
         )
         with overview_tab:
+            st.markdown("### 领域温度")
+            st.caption("完整领域评分与知识缺口集中在这里查看。")
+            visible_topics = (
+                [topic for topic in topics if topic.id == query_topic]
+                if query_topic in topic_names
+                else topics
+            )
+            if query_topic in topic_names:
+                focus_cols = st.columns([3, 1])
+                focus_cols[0].info(
+                    f"正在查看首页提示的领域：{topic_names[query_topic]}"
+                )
+                focus_cols[1].page_link(
+                    "pages/progress.py",
+                    label="查看全部领域",
+                    width="stretch",
+                )
+            for topic in visible_topics:
+                item = topic_health[topic.id]
+                label_col, value_col = st.columns([3, 1])
+                label_col.markdown(f"**{topic.name}**")
+                value_col.markdown(f"**{item['score']:.0f}%**")
+                st.progress(item["score"] / 100)
+                st.caption(
+                    f"{item['change_point_count']} 个变化 · "
+                    f"{item['important_gap_count']} 个重要缺口 · "
+                    f"实践率 {item['practiced_rate']:.0f}%"
+                )
+
+            st.divider()
             left, right = st.columns([1.15, 1])
             with left:
                 st.markdown("### 领域证据分布")
@@ -207,6 +240,13 @@ def render() -> None:
                         f"{file_fact_count} 条有效事实 · "
                         f"内容 hash {source_file.content_hash[:12]}…"
                     )
+
+
+def _query_int(key: str) -> int | None:
+    try:
+        return int(st.query_params.get(key, ""))
+    except (TypeError, ValueError):
+        return None
 
 
 render()

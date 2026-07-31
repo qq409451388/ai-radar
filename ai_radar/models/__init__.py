@@ -130,6 +130,13 @@ class ChangePoint(Base):
     status: Mapped[str] = mapped_column(
         String(16), default="ACTIVE", server_default="ACTIVE", index=True
     )  # ACTIVE / DEPRECATED
+    # Single-user placement for now. This field can move unchanged to a future
+    # per-user change_point_followup table.
+    followup_snoozed_until: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        index=True,
+    )
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

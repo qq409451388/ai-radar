@@ -73,6 +73,17 @@ def signal_action_hint(signal_type: str) -> str:
     }.get(signal_type, "阅读来源并形成研究记录")
 
 
+def coverage_relation_label(coverage: KnowledgeCoverage | None) -> str:
+    if coverage is None:
+        return "尚未评估"
+    return {
+        "NONE": "尚未覆盖",
+        "AWARE": "已关注",
+        "UNDERSTOOD": "已理解",
+        "PRACTICED": "已实践",
+    }.get(coverage.coverage_level, coverage.coverage_level)
+
+
 def signal_sort_key(change_point: ChangePoint) -> tuple[int, int, float]:
     seen_at = change_point.first_seen_at
     if seen_at is None:

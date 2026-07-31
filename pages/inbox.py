@@ -37,6 +37,15 @@ STATUS_LABEL = {
 
 def render() -> None:
     cfg = get_config()
+    query_view = st.query_params.get("view", "design")
+    query_period = st.query_params.get("period")
+    query_topic = _query_int("topic")
+    query_signals = [
+        value
+        for value in st.query_params.get("signals", "").split(",")
+        if value
+        in {"STANDARD", "ARCHITECTURE", "CONCEPT", "CAPABILITY", "RELEASE"}
+    ]
     st.markdown('<div class="page-kicker">Intelligence inbox</div>', unsafe_allow_html=True)
     st.title("情报收件箱")
     st.markdown(
@@ -98,35 +107,106 @@ def render() -> None:
             "归档只改变处理状态，不删除原始数据。"
         )
 
+    tab_labels = [
+        f"设计信号 · {design_count}",
+        "全部变化",
+        f"待处理队列 · {counts.get('PENDING', 0)}",
+        "已处理与失败",
+    ]
+    default_tab = {
+        "design": tab_labels[0],
+        "changes": tab_labels[1],
+        "queue": tab_labels[2],
+        "done": tab_labels[3],
+    }.get(query_view, tab_labels[0])
     tab_design, tab_changes, tab_queue, tab_done = st.tabs(
-        [
-            f"设计信号 · {design_count}",
-            "全部变化",
-            f"待处理队列 · {counts.get('PENDING', 0)}",
-            "已处理与失败",
-        ]
+        tab_labels,
+        default=default_tab,
+        key="inbox_views",
     )
 
     with tab_design:
-        _render_changes(design_only=True)
+        _render_changes(
+            design_only=True,
+            query_period=query_period,
+            query_topic=query_topic,
+            query_signals=query_signals,
+        )
     with tab_changes:
-        _render_changes()
+        _render_changes(
+            query_period=query_period,
+            query_topic=query_topic,
+            query_signals=query_signals,
+        )
     with tab_queue:
         _render_items(statuses=["PENDING"])
     with tab_done:
         _render_items(statuses=["SUCCESS", "IGNORED", "FAILED"])
 
 
-def _render_changes(design_only: bool = False) -> None:
+def _render_changes(
+    design_only: bool = False,
+    *,
+    query_period: str | None = None,
+    query_topic: int | None = None,
+    query_signals: list[str] | None = None,
+) -> None:
     view_key = "design" if design_only else "all"
-    range_label = st.segmented_control(
-        "时间范围",
-        ["7 天", "30 天", "全部"],
-        default="30 天",
-        key=f"inbox_change_range_{view_key}",
-    )
-    days = {"7 天": 7, "30 天": 30}.get(range_label)
     with session_scope() as session:
+        topics = list(session.execute(select(Topic).order_by(Topic.id)).scalars())
+        topic_names = {topic.id: topic.name for topic in topics}
+        topic_options = [None] + [topic.id for topic in topics]
+        signal_options = [
+            "STANDARD",
+            "ARCHITECTURE",
+            "CONCEPT",
+            "CAPABILITY",
+            "RELEASE",
+        ]
+        default_range = {
+            "7d": "7 天",
+            "30d": "30 天",
+        }.get(query_period, "30 天")
+        state_signature = (
+            query_period,
+            query_topic,
+            tuple(query_signals or []),
+        )
+        signature_key = f"_inbox_query_signature_{view_key}"
+        if st.session_state.get(signature_key) != state_signature:
+            st.session_state[signature_key] = state_signature
+            st.session_state[f"inbox_change_range_{view_key}"] = default_range
+            st.session_state[f"inbox_change_topic_{view_key}"] = (
+                query_topic if query_topic in topic_options else None
+            )
+            st.session_state[f"inbox_change_signals_{view_key}"] = [
+                value
+                for value in (query_signals or [])
+                if value in signal_options
+            ]
+
+        filter_cols = st.columns([1.1, 1.35, 2])
+        range_label = filter_cols[0].segmented_control(
+            "时间范围",
+            ["7 天", "30 天", "全部"],
+            key=f"inbox_change_range_{view_key}",
+        )
+        selected_topic = filter_cols[1].selectbox(
+            "领域",
+            topic_options,
+            format_func=lambda value: "全部领域"
+            if value is None
+            else topic_names[value],
+            key=f"inbox_change_topic_{view_key}",
+        )
+        selected_signals = filter_cols[2].multiselect(
+            "信号类型",
+            signal_options,
+            format_func=signal_type_label,
+            placeholder="全部类型",
+            key=f"inbox_change_signals_{view_key}",
+        )
+        days = {"7 天": 7, "30 天": 30}.get(range_label)
         stmt = (
             select(ChangePoint)
             .where(ChangePoint.status == "ACTIVE")
@@ -143,12 +223,12 @@ def _render_changes(design_only: bool = False) -> None:
             )
         if design_only:
             stmt = stmt.where(ChangePoint.signal_type.in_(DESIGN_SIGNAL_TYPES))
+        if selected_topic is not None:
+            stmt = stmt.where(ChangePoint.topic_id == selected_topic)
+        if selected_signals:
+            stmt = stmt.where(ChangePoint.signal_type.in_(selected_signals))
         cps = list(session.execute(stmt).scalars())
         cps.sort(key=signal_sort_key, reverse=True)
-        topic_names = {
-            topic.id: topic.name
-            for topic in session.execute(select(Topic)).scalars()
-        }
         if not cps:
             st.info("这个时间范围内还没有提炼出知识变化。先运行一批分析。")
             return
@@ -267,6 +347,13 @@ def _render_items(statuses: list[str]) -> None:
                 if st.button("重新加入分析队列", key=f"requeue_{item.id}"):
                     orchestrator.requeue_source_item(item.id)
                     st.rerun()
+
+
+def _query_int(key: str) -> int | None:
+    try:
+        return int(st.query_params.get(key, ""))
+    except (TypeError, ValueError):
+        return None
 
 
 render()

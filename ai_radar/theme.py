@@ -132,17 +132,39 @@ def inject_app_styles() -> None:
         .setup-sidebar-note b { color:var(--radar-ink); font-size:.82rem; }
         .setup-sidebar-note span { color:var(--radar-muted); font-size:.73rem; line-height:1.5; }
         .setup-sidebar-note small { color:var(--radar-good); font-weight:650; }
-        .radar-card {
-          background:var(--radar-surface); border:1px solid var(--radar-line);
-          border-radius:1rem; padding:1rem 1.1rem; min-height:100%;
-          box-shadow:0 1px 2px rgba(16,24,40,.025);
+        .today-summary {
+          max-width:56rem; color:#364153; font-size:1.08rem; line-height:1.75;
+          text-wrap:pretty; margin:-.35rem 0 1rem;
         }
-        .card-label { color:var(--radar-muted); font-size:.72rem; font-weight:650; }
-        .card-value { color:var(--radar-ink); font-size:1.65rem; font-weight:750; margin:.25rem 0; }
-        .card-detail { color:var(--radar-muted); font-size:.76rem; }
-        .card-value.good { color:var(--radar-good); }
-        .card-value.warn { color:var(--radar-warn); }
-        .card-value.bad { color:var(--radar-bad); }
+        .today-summary strong {
+          color:var(--radar-ink); font-variant-numeric:tabular-nums;
+        }
+        .focus-title {
+          color:var(--radar-ink); font-size:1rem; line-height:1.45;
+          font-weight:750; overflow-wrap:anywhere; text-wrap:pretty;
+        }
+        .focus-relation {
+          width:max-content; margin-left:auto; color:#4b4bb8;
+          background:var(--radar-accent-soft); border-radius:99px;
+          padding:.24rem .58rem; font-size:.7rem; font-weight:720;
+        }
+        .focus-summary {
+          color:var(--radar-muted); font-size:.8rem; line-height:1.6;
+          display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+          overflow:hidden; overflow-wrap:anywhere; margin:.2rem 0 .7rem;
+        }
+        .interest-count {
+          color:var(--radar-muted); font-size:.74rem; text-align:right;
+          font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap;
+        }
+        .today-empty {
+          display:flex; flex-direction:column; gap:.4rem;
+          border:1px dashed #cfd4df; border-radius:.95rem; padding:1.15rem 1.2rem;
+          color:var(--radar-muted); background:rgba(255,255,255,.62);
+          margin:.75rem 0;
+        }
+        .today-empty strong { color:var(--radar-ink); }
+        .today-empty span { font-size:.8rem; line-height:1.55; }
         .section-heading { font-size:1.05rem; font-weight:720; margin:1.8rem 0 .2rem; }
         .section-caption { color:var(--radar-muted); font-size:.78rem; margin-bottom:.8rem; }
         .pipeline-choice-note {
@@ -213,38 +235,6 @@ def inject_app_styles() -> None:
           color:var(--radar-ink); font-weight:700; margin-bottom:.3rem;
         }
         .pipeline-sidebar-detail { color:var(--radar-muted); font-size:.68rem; }
-        .priority-card {
-          background:white; border:1px solid var(--radar-line); border-radius:.9rem;
-          padding:1rem 1.05rem; margin:.55rem 0;
-        }
-        .signal-card {
-          background:white; border:1px solid var(--radar-line); border-top:3px solid #8b8bc9;
-          border-radius:.95rem; padding:1rem 1.05rem; margin:.45rem 0 .75rem;
-          min-height:12.2rem; box-shadow:0 5px 20px rgba(16,24,40,.035);
-        }
-        .signal-card.standard { border-top-color:#7b46b2; }
-        .signal-card.architecture { border-top-color:var(--radar-accent); }
-        .signal-card.concept { border-top-color:#1886a5; }
-        .signal-card-top { display:flex; justify-content:space-between; gap:.6rem; align-items:center; }
-        .signal-kind {
-          color:#4b4bb8; background:var(--radar-accent-soft); border-radius:99px;
-          padding:.2rem .52rem; font-size:.67rem; font-weight:750;
-        }
-        .signal-importance { color:var(--radar-muted); font-size:.66rem; font-weight:650; }
-        .signal-title {
-          color:var(--radar-ink); font-size:.96rem; font-weight:740;
-          line-height:1.4; margin:.75rem 0 .3rem;
-        }
-        .signal-meta { color:#8a92a1; font-size:.68rem; margin-bottom:.55rem; }
-        .signal-summary {
-          color:var(--radar-muted); font-size:.76rem; line-height:1.55;
-          display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
-          overflow:hidden;
-        }
-        .signal-action {
-          color:#42685d; background:#edf8f4; border-radius:.55rem;
-          padding:.48rem .58rem; font-size:.7rem; font-weight:650; margin-top:.7rem;
-        }
         .signal-group-intro {
           color:var(--radar-muted); background:var(--radar-soft);
           border-left:3px solid var(--radar-accent); border-radius:.45rem;
@@ -261,10 +251,6 @@ def inject_app_styles() -> None:
           color:var(--radar-muted); font-size:.67rem; font-weight:650;
           background:var(--radar-soft); border-radius:99px; padding:.15rem .45rem;
         }
-        .priority-card.critical { border-left:4px solid var(--radar-bad); }
-        .priority-card.watch { border-left:4px solid var(--radar-warn); }
-        .priority-title { font-size:.94rem; font-weight:700; color:var(--radar-ink); }
-        .priority-meta { color:var(--radar-muted); font-size:.72rem; margin:.3rem 0 .6rem; }
         .pill {
           display:inline-block; padding:.18rem .5rem; border-radius:99px;
           background:var(--radar-soft); color:var(--radar-muted); font-size:.68rem;

@@ -1,6 +1,7 @@
 """Knowledge map: change points, evidence, and coverage transitions."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from html import escape
 
 import streamlit as st
@@ -68,6 +69,18 @@ def render() -> None:
         unsafe_allow_html=True,
     )
 
+    target_id = _query_int("change_point")
+    query_topic = _query_int("topic")
+    query_signals = [
+        value
+        for value in st.query_params.get("signals", "").split(",")
+        if value in {group[0] for group in SIGNAL_GROUPS}
+    ]
+    query_coverage = st.query_params.get("coverage")
+    query_importance = _query_int("importance_min")
+    query_period = st.query_params.get("period")
+    query_keyword = st.query_params.get("q", "")
+
     reassess_id: int | None = None
     with session_scope() as session:
         topics = list(
@@ -75,42 +88,117 @@ def render() -> None:
         )
         topic_names = {topic.id: topic.name for topic in topics}
 
-        filters = st.columns([1.2, 1.1, 1, 1.25, 1.8])
+        topic_options = [None] + [topic.id for topic in topics]
+        level_options = [
+            None,
+            "GAP",
+            "NONE",
+            "AWARE",
+            "UNDERSTOOD",
+            "PRACTICED",
+        ]
+        importance_options = [None, 5, 3, 1]
+        signal_options = [group[0] for group in SIGNAL_GROUPS]
+        period_options = [None, "7d", "30d"]
+        query_signature = (
+            target_id,
+            query_topic,
+            tuple(query_signals),
+            query_coverage,
+            query_importance,
+            query_period,
+            query_keyword,
+        )
+        if st.session_state.get("_knowledge_query_signature") != query_signature:
+            st.session_state["_knowledge_query_signature"] = query_signature
+            st.session_state["knowledge_topic"] = (
+                query_topic if query_topic in topic_options else None
+            )
+            st.session_state["knowledge_level"] = (
+                query_coverage if query_coverage in level_options else None
+            )
+            st.session_state["knowledge_importance"] = (
+                query_importance
+                if query_importance in importance_options
+                else None
+            )
+            st.session_state["knowledge_signals"] = query_signals
+            st.session_state["knowledge_period"] = (
+                query_period if query_period in period_options else None
+            )
+            st.session_state["knowledge_keyword"] = query_keyword
+
+        filters = st.columns([1.15, 1.2, 1, 1.6, 1, 1.7])
         selected_topic = filters[0].selectbox(
             "领域",
-            [None] + [topic.id for topic in topics],
+            topic_options,
             format_func=lambda value: "全部领域"
             if value is None
             else topic_names[value],
+            key="knowledge_topic",
         )
         selected_level = filters[1].selectbox(
             "当前覆盖",
-            [None, "NONE", "AWARE", "UNDERSTOOD", "PRACTICED"],
+            level_options,
             format_func=lambda value: "全部等级"
             if value is None
+            else "重要知识缺口"
+            if value == "GAP"
             else LEVEL_LABEL[value],
+            key="knowledge_level",
         )
         selected_importance = filters[2].selectbox(
-            "重要度",
-            [None, 5, 3, 1],
+            "最低重要度",
+            importance_options,
             format_func=lambda value: "全部" if value is None else str(value),
+            key="knowledge_importance",
         )
-        selected_signal = filters[3].selectbox(
+        selected_signals = filters[3].multiselect(
             "信号类型",
-            [None, "STANDARD", "ARCHITECTURE", "CONCEPT", "CAPABILITY", "RELEASE"],
-            format_func=lambda value: "全部类型"
-            if value is None
-            else signal_type_label(value),
+            signal_options,
+            format_func=signal_type_label,
+            placeholder="全部类型",
+            key="knowledge_signals",
         )
-        keyword = filters[4].text_input("搜索知识变化")
+        selected_period = filters[4].selectbox(
+            "发现时间",
+            period_options,
+            format_func=lambda value: {
+                None: "全部时间",
+                "7d": "近 7 天",
+                "30d": "近 30 天",
+            }[value],
+            key="knowledge_period",
+        )
+        keyword = filters[5].text_input(
+            "搜索知识变化",
+            key="knowledge_keyword",
+        )
+        if target_id is None:
+            _sync_filter_query(
+                selected_topic=selected_topic,
+                selected_level=selected_level,
+                selected_importance=selected_importance,
+                selected_signals=selected_signals,
+                selected_period=selected_period,
+                keyword=keyword,
+            )
 
         stmt = select(ChangePoint).where(ChangePoint.status == "ACTIVE")
-        if selected_topic is not None:
+        if target_id is not None:
+            stmt = stmt.where(ChangePoint.id == target_id)
+        elif selected_topic is not None:
             stmt = stmt.where(ChangePoint.topic_id == selected_topic)
         if selected_importance is not None:
-            stmt = stmt.where(ChangePoint.importance == selected_importance)
-        if selected_signal is not None:
-            stmt = stmt.where(ChangePoint.signal_type == selected_signal)
+            stmt = stmt.where(ChangePoint.importance >= selected_importance)
+        if selected_signals:
+            stmt = stmt.where(ChangePoint.signal_type.in_(selected_signals))
+        if selected_period:
+            days = 7 if selected_period == "7d" else 30
+            stmt = stmt.where(
+                ChangePoint.first_seen_at
+                >= datetime.now(timezone.utc) - timedelta(days=days)
+            )
         if keyword:
             like = f"%{keyword}%"
             stmt = stmt.where(
@@ -129,7 +217,17 @@ def render() -> None:
             ).scalars()
         )
         cps.sort(key=signal_sort_key, reverse=True)
-        if selected_level is not None:
+        if selected_level == "GAP":
+            cps = [
+                cp
+                for cp in cps
+                if cp.importance >= 3
+                and (
+                    (cov := latest_coverage(session, cp.id)) is None
+                    or cov.coverage_level in ("NONE", "AWARE")
+                )
+            ]
+        elif selected_level is not None:
             cps = [
                 cp
                 for cp in cps
@@ -156,13 +254,21 @@ def render() -> None:
             f"当前筛选 {len(cps)} 条活跃知识变化点 · "
             "已按信号类型分组，组内按领域归档"
         )
+        if target_id is not None:
+            target_cols = st.columns([3, 1])
+            target_cols[0].info("正在查看首页选中的知识点。")
+            target_cols[1].page_link(
+                "pages/knowledge.py",
+                label="返回全部知识变化",
+                width="stretch",
+            )
         if not cps:
             st.info("没有符合条件的知识点。可以先去“情报收件箱”分析一批资讯。")
         if cps:
             visible_groups = [
                 group
                 for group in SIGNAL_GROUPS
-                if selected_signal is None or group[0] == selected_signal
+                if not selected_signals or group[0] in selected_signals
             ]
             grouped = {
                 signal_type: [
@@ -221,6 +327,7 @@ def render() -> None:
                                 session,
                                 cp,
                                 topic_names,
+                                expanded=cp.id == target_id,
                             )
                             if selected_id is not None:
                                 reassess_id = selected_id
@@ -236,13 +343,16 @@ def _render_change_point(
     session,
     cp: ChangePoint,
     topic_names: dict[int, str],
+    *,
+    expanded: bool = False,
 ) -> int | None:
     cov = latest_coverage(session, cp.id)
     level = cov.coverage_level if cov else "NONE"
     selected_id: int | None = None
     with st.expander(
         f"{'●' if cp.importance == 5 else '◆' if cp.importance == 3 else '·'} "
-        f"{cp.title} · {LEVEL_LABEL[level]}"
+        f"{cp.title} · {LEVEL_LABEL[level]}",
+        expanded=expanded,
     ):
         meta_cols = st.columns([2.1, 1.1, 1, 1, 1])
         meta_cols[0].caption(topic_names.get(cp.topic_id, "未分类"))
@@ -328,6 +438,11 @@ def _render_change_point(
 
         with manage_tab:
             with st.form(f"manage_cp_{cp.id}"):
+                if cp.followup_snoozed_until:
+                    st.caption(
+                        "首页提醒已暂时隐藏至 "
+                        f"{fmt_dt(cp.followup_snoozed_until)}"
+                    )
                 new_importance = st.select_slider(
                     "重要度",
                     options=[1, 3, 5],
@@ -353,13 +468,84 @@ def _render_change_point(
                     ["ACTIVE", "DEPRECATED"],
                     index=0 if cp.status == "ACTIVE" else 1,
                 )
-                if st.form_submit_button("保存调整"):
+                save = st.form_submit_button("保存调整")
+                restore = (
+                    st.form_submit_button("恢复首页提醒")
+                    if cp.followup_snoozed_until
+                    else False
+                )
+                if save:
                     cp.importance = new_importance
                     cp.signal_type = new_signal_type
                     cp.status = new_status
                     st.success("已保存。该调整会影响后续评分。")
+                if restore:
+                    cp.followup_snoozed_until = None
+                    st.success("已恢复，该知识点可以重新进入今日重点。")
         st.caption(f"event_key · {escape(cp.event_key)}")
     return selected_id
+
+
+def _query_int(key: str) -> int | None:
+    try:
+        return int(st.query_params.get(key, ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _sync_filter_query(
+    *,
+    selected_topic: int | None,
+    selected_level: str | None,
+    selected_importance: int | None,
+    selected_signals: list[str],
+    selected_period: str | None,
+    keyword: str,
+) -> None:
+    managed_keys = {
+        "topic",
+        "coverage",
+        "importance_min",
+        "signals",
+        "period",
+        "q",
+    }
+    desired = {
+        key: value
+        for key, value in {
+            "topic": str(selected_topic) if selected_topic is not None else "",
+            "coverage": selected_level or "",
+            "importance_min": str(selected_importance)
+            if selected_importance is not None
+            else "",
+            "signals": ",".join(selected_signals),
+            "period": selected_period or "",
+            "q": keyword.strip(),
+        }.items()
+        if value
+    }
+    current = {
+        key: st.query_params.get(key)
+        for key in managed_keys
+        if st.query_params.get(key) not in (None, "")
+    }
+    if current == desired:
+        return
+    preserved = {
+        key: value
+        for key, value in st.query_params.to_dict().items()
+        if key not in managed_keys and key != "change_point"
+    }
+    st.query_params.from_dict({**preserved, **desired})
+    st.session_state["_knowledge_query_signature"] = (
+        None,
+        selected_topic,
+        tuple(selected_signals),
+        selected_level,
+        selected_importance,
+        selected_period,
+        keyword.strip(),
+    )
 
 
 render()

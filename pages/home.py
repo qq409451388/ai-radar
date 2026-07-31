@@ -1,307 +1,203 @@
-"""Today-first command center."""
+"""Today-first entry point for AI Radar."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from html import escape
 
 import streamlit as st
-from sqlalchemy import func, or_, select
 
-from ai_radar.bootstrap import DESIGN_SIGNAL_TYPES
-from ai_radar.config import get_config
+from ai_radar import orchestrator
 from ai_radar.database import session_scope
-from ai_radar.models import (
-    ChangePoint,
-    JobLog,
-    KnowledgeCoverage,
-    ProfileSourceFile,
-    SourceItem,
-    Topic,
-)
 from ai_radar.pipeline_runner import (
     enqueue_pipeline,
     get_active_pipeline_snapshot,
 )
-from ai_radar.services.scoring_service import ScoringService
-from ai_radar.ui import (
-    fmt_dt,
-    latest_coverage,
-    signal_action_hint,
-    signal_sort_key,
-    signal_type_label,
-    sources_for_change_point,
-)
+from ai_radar.services.radar_service import RadarService
+from ai_radar.ui import fmt_dt, signal_type_label
 
 
-def _metric_card(label: str, value: str, detail: str, tone: str = "") -> None:
+def render() -> None:
+    st.markdown('<div class="page-kicker">Today</div>', unsafe_allow_html=True)
+    st.title("今天该关注什么")
+
+    with session_scope() as session:
+        data = RadarService(session).load_home()
+    active_pipeline = get_active_pipeline_snapshot()
+
     st.markdown(
         f"""
-        <div class="radar-card">
-          <div class="card-label">{escape(label)}</div>
-          <div class="card-value {tone}">{escape(value)}</div>
-          <div class="card-detail">{escape(detail)}</div>
+        <div class="today-summary">
+          今日发现 <strong>{data.today_count}</strong> 个有效变化，
+          近 7 天有 <strong>{data.recent_priority_count}</strong> 个值得重点关注；
+          近 {data.score_window_days} 天仍有
+          <strong>{data.important_gap_count}</strong> 个重要知识缺口。
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-
-def render() -> None:
-    cfg = get_config()
-    st.markdown('<div class="page-kicker">Daily command center</div>', unsafe_allow_html=True)
-    st.title("今天该关注什么")
-    st.markdown(
-        '<div class="page-subtitle">从最新变化、知识缺口和个人进展中，给出一份可以直接行动的清单。</div>',
-        unsafe_allow_html=True,
-    )
-
-    now = datetime.now(timezone.utc)
-    recent_cutoff = now - timedelta(days=cfg.score_window_days)
-    with session_scope() as session:
-        pending = session.scalar(
-            select(func.count(SourceItem.id)).where(
-                SourceItem.analyze_status == "PENDING"
-            )
-        ) or 0
-        failed = session.scalar(
-            select(func.count(SourceItem.id)).where(
-                SourceItem.analyze_status == "FAILED"
-            )
-        ) or 0
-        recent_cps = list(
-            session.execute(
-                select(ChangePoint)
-                .where(
-                    ChangePoint.status == "ACTIVE",
-                    or_(
-                        ChangePoint.first_seen_at >= recent_cutoff,
-                        (
-                            ChangePoint.signal_type.in_(DESIGN_SIGNAL_TYPES)
-                            & (ChangePoint.last_seen_at >= recent_cutoff)
-                        ),
-                    ),
-                )
-                .order_by(
-                    ChangePoint.importance.desc(), ChangePoint.first_seen_at.desc()
-                )
-            ).scalars()
+    action_col, status_col = st.columns([1.2, 3.8], vertical_alignment="center")
+    if action_col.button(
+        "运行今日更新",
+        type="primary",
+        width="stretch",
+        disabled=active_pipeline is not None,
+    ):
+        enqueue_pipeline("FULL_UPDATE")
+        st.toast("完整更新已在后台启动", icon="🚀")
+        st.rerun()
+    if active_pipeline:
+        status_col.caption(
+            f"{active_pipeline['pipeline_label']}正在后台运行 · "
+            "切换页面不会中断"
         )
-        recent_cps.sort(key=signal_sort_key, reverse=True)
-        topics = list(
-            session.execute(
-                select(Topic).where(Topic.enabled == True).order_by(Topic.id)  # noqa: E712
-            ).scalars()
-        )
-        health = ScoringService(session).compute_all_topic_health()
-        topic_names = {topic.id: topic.name for topic in topics}
-        gaps = []
-        design_signals = []
-        for cp in recent_cps:
-            cov = latest_coverage(session, cp.id)
-            if cp.signal_type in DESIGN_SIGNAL_TYPES:
-                design_signals.append(
-                    {
-                        "id": cp.id,
-                        "title": cp.title,
-                        "summary": cp.summary,
-                        "why": cp.why_it_matters,
-                        "importance": cp.importance,
-                        "signal_type": cp.signal_type,
-                        "topic": topic_names.get(cp.topic_id, "未分类"),
-                        "level": cov.coverage_level if cov else "NONE",
-                        "first_seen": cp.first_seen_at,
-                        "source_count": len(
-                            sources_for_change_point(session, cp.id)
-                        ),
-                    }
-                )
-            if cp.importance >= 3 and (
-                cov is None or cov.coverage_level in ("NONE", "AWARE")
-            ):
-                gaps.append(
-                    {
-                        "id": cp.id,
-                        "title": cp.title,
-                        "summary": cp.summary,
-                        "importance": cp.importance,
-                        "signal_type": cp.signal_type,
-                        "topic": topic_names.get(cp.topic_id, "未分类"),
-                        "level": cov.coverage_level if cov else "NONE",
-                        "first_seen": cp.first_seen_at,
-                    }
-                )
-        profile = session.execute(
-            select(ProfileSourceFile)
-            .order_by(ProfileSourceFile.last_success_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        last_pipeline = session.execute(
-            select(JobLog)
-            .where(JobLog.job_type == "snapshot")
-            .order_by(JobLog.started_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        total_recent_weight = sum(item["total_weight"] for item in health.values())
-        weighted_score = (
-            sum(item["score"] * item["total_weight"] for item in health.values())
-            / total_recent_weight
-            if total_recent_weight
-            else 0.0
-        )
-        practiced_points = sum(
-            1
-            for cp in recent_cps
-            if (
-                (cov := latest_coverage(session, cp.id))
-                and cov.coverage_level == "PRACTICED"
-            )
-        )
-
-    active_pipeline = get_active_pipeline_snapshot()
-    action_col, secondary_col, note_col = st.columns([1.25, 1, 2.6])
-    with action_col:
-        if st.button(
-            "运行今日更新",
-            type="primary",
-            width="stretch",
-            disabled=active_pipeline is not None,
-        ):
-            enqueue_pipeline("FULL_UPDATE")
-            st.toast("完整更新已在后台启动", icon="🚀")
-            st.rerun()
-    with secondary_col:
-        if st.button(
-            "只同步 GPT 记忆",
-            width="stretch",
-            disabled=active_pipeline is not None,
-        ):
-            enqueue_pipeline("MEMORY")
-            st.toast("记忆同步已在后台启动", icon="🚀")
-            st.rerun()
-    with note_col:
-        if active_pipeline:
-            st.caption(
-                f"{active_pipeline['pipeline_label']}正在后台运行；"
-                "切换页面不影响，侧边栏会持续显示进度。"
-            )
-        else:
-            st.caption(
-                f"完整更新会自动处理完队列，每批 {cfg.analyze_batch_size} 条。"
-                f"上次完整快照：{fmt_dt(last_pipeline.finished_at) if last_pipeline else '尚未生成'}"
-            )
-
-    cols = st.columns(4)
-    with cols[0]:
-        _metric_card(
-            f"近 {cfg.score_window_days} 天跟进覆盖",
-            f"{weighted_score:.0f}%",
-            f"{len(recent_cps)} 个有效知识变化点",
-            "good" if weighted_score >= 65 else "warn",
-        )
-    with cols[1]:
-        _metric_card(
-            "优先知识缺口",
-            str(len(gaps)),
-            "重要度 ≥ 3，且尚未理解",
-            "bad" if gaps else "good",
-        )
-    with cols[2]:
-        _metric_card(
-            "设计信号",
-            str(len(design_signals)),
-            f"新概念、架构或标准 · 已实践 {practiced_points}",
-            "warn" if design_signals else "good",
-        )
-    with cols[3]:
-        profile_detail = (
-            f"最后成功 {fmt_dt(profile.last_extracted_at or profile.last_success_at)}"
-            if profile
-            else "尚未连接记忆仓库"
-        )
-        _metric_card(
-            "情报收件箱",
-            str(pending),
-            f"{failed} 条失败 · {profile_detail}",
-            "warn" if pending else "good",
-        )
-
-    st.markdown('<div class="section-heading">新设计信号</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-caption">优先展示会改变设计方式的新概念、架构与标准；常规版本更新仍保留在收件箱。</div>',
-        unsafe_allow_html=True,
-    )
-    if not design_signals:
-        st.info("近期还没有识别到设计信号。运行情报更新后会持续检查官方工程文章和规范变更。")
     else:
-        signal_columns = st.columns(2)
-        for index, item in enumerate(design_signals[:6]):
-            with signal_columns[index % 2]:
-                confirmation = (
-                    f" · {item['source_count']} 个来源确认"
-                    if item["source_count"] >= 2
-                    else ""
+        status_col.caption(
+            f"最近完整更新：{fmt_dt(data.last_update_at)}"
+        )
+
+    if data.last_pipeline_status in ("FAILED", "INTERRUPTED"):
+        st.error(
+            "上次完整更新没有成功完成。"
+            f"{data.last_pipeline_error or '请重新运行，或前往“自动化与设置”查看步骤详情。'}"
+        )
+    elif data.last_pipeline_status == "PARTIAL":
+        st.warning(
+            "上次完整更新有部分项目处理失败。"
+            "请前往“自动化与设置”查看失败步骤并决定是否重试。"
+        )
+
+    st.markdown("## 今日重点")
+    st.caption("优先展示今天和近 7 天的新变化；历史缺口只在重点不足时少量补充。")
+    if not data.focus_items:
+        _render_empty_state()
+    else:
+        for item in data.focus_items:
+            _render_focus_item(item)
+
+    st.markdown("## 按兴趣继续看")
+    st.caption("分类数量来自近 7 天变化；知识缺口使用当前评分窗口。")
+    interest_columns = st.columns(2)
+    for index, entry in enumerate(data.interests):
+        with interest_columns[index % 2]:
+            with st.container(border=True):
+                label_col, count_col = st.columns(
+                    [4, 1],
+                    vertical_alignment="center",
                 )
-                st.markdown(
-                    f"""
-                    <div class="signal-card {escape(item['signal_type'].lower())}">
-                      <div class="signal-card-top">
-                        <span class="signal-kind">{escape(signal_type_label(item['signal_type']))}</span>
-                        <span class="signal-importance">重要度 {item['importance']}</span>
-                      </div>
-                      <div class="signal-title">{escape(item['title'])}</div>
-                      <div class="signal-meta">
-                        {escape(item['topic'])} · {escape(fmt_dt(item['first_seen']))}{escape(confirmation)}
-                      </div>
-                      <div class="signal-summary">{escape((item['summary'] or '')[:220])}</div>
-                      <div class="signal-action">下一步：{escape(signal_action_hint(item['signal_type']))}</div>
-                    </div>
-                    """,
+                label_col.page_link(
+                    "pages/knowledge.py",
+                    label=entry.label,
+                    query_params=entry.query_params,
+                    width="stretch",
+                )
+                count_col.markdown(
+                    f'<div class="interest-count">{entry.count} 条</div>',
                     unsafe_allow_html=True,
                 )
 
-    left, right = st.columns([1.45, 1])
-    with left:
-        st.markdown('<div class="section-heading">优先跟进</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="section-caption">重要且尚未形成充分认知证据的变化，按优先级排序。</div>',
-            unsafe_allow_html=True,
-        )
-        if not gaps:
-            st.success("当前没有高优先级知识缺口。完成下一批情报分析后会自动更新。")
-        for gap in gaps[:6]:
-            level_class = gap["level"].lower()
-            st.markdown(
-                f"""
-                <div class="priority-card {'critical' if gap['importance'] == 5 else 'watch'}">
-                  <div class="priority-title">{escape(gap['title'])}</div>
-                  <div class="priority-meta">
-                    {escape(gap['topic'])} · 重要度 {gap['importance']} · {escape(fmt_dt(gap['first_seen']))}
-                  </div>
-                  <span class="pill {level_class}">{escape(gap['level'])}</span>
-                  <span class="pill">建议：{escape(signal_action_hint(gap.get('signal_type', 'RELEASE')))}</span>
-                  <div class="card-detail" style="margin-top:.65rem">{escape((gap['summary'] or '')[:180])}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    more_col, all_col, _ = st.columns([1.3, 1.3, 3])
+    more_col.page_link(
+        "pages/inbox.py",
+        label="查看最近 7 天变化",
+        query_params={"view": "changes", "period": "7d"},
+        width="stretch",
+    )
+    all_col.page_link(
+        "pages/knowledge.py",
+        label="查看全部知识变化",
+        width="stretch",
+    )
 
-    with right:
-        st.markdown('<div class="section-heading">领域温度</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="section-caption">以近 {cfg.score_window_days} 天变化为窗口，不再被多年历史稀释。</div>',
+    if data.topic_decline:
+        decline = data.topic_decline
+        if decline.declining_count == 1:
+            label = f"近期下降最多：{decline.topic_name} {decline.delta:.0f}"
+        else:
+            label = (
+                f"{decline.declining_count} 个领域近期覆盖率下降 · "
+                f"{decline.topic_name} {decline.delta:.0f}"
+            )
+        st.page_link(
+            "pages/progress.py",
+            label=label,
+            query_params={
+                "view": "overview",
+                "topic": str(decline.topic_id),
+            },
+            icon="📉",
+        )
+
+
+def _render_focus_item(item) -> None:
+    with st.container(border=True):
+        title_col, relation_col = st.columns(
+            [4, 1.2],
+            vertical_alignment="top",
+        )
+        title_col.markdown(
+            f'<div class="focus-title">{escape(item.title)}</div>',
             unsafe_allow_html=True,
         )
-        for topic in topics:
-            item = health[topic.id]
-            label_col, value_col = st.columns([3, 1])
-            label_col.markdown(f"**{topic.name}**")
-            value_col.markdown(f"**{item['score']:.0f}%**")
-            st.progress(item["score"] / 100)
-            st.caption(
-                f"{item['change_point_count']} 个变化 · "
-                f"{item['important_gap_count']} 个重要缺口 · "
-                f"实践率 {item['practiced_rate']:.0f}%"
+        relation_col.markdown(
+            f'<div class="focus-relation">{escape(item.relation)}</div>',
+            unsafe_allow_html=True,
+        )
+        supplement = " · 历史缺口补充" if item.is_historical_supplement else ""
+        st.caption(
+            f"{signal_type_label(item.signal_type)} · {item.topic_name}"
+            f"{supplement}"
+        )
+        st.markdown(
+            f'<div class="focus-summary">{escape(item.summary or "暂无摘要")}</div>',
+            unsafe_allow_html=True,
+        )
+        action_columns = st.columns([1, 1.15, 1, 3.5])
+        action_columns[0].page_link(
+            "pages/knowledge.py",
+            label="查看详情",
+            query_params={"change_point": str(item.change_point_id)},
+            width="stretch",
+        )
+        if item.primary_source_url:
+            action_columns[1].link_button(
+                "官方来源",
+                item.primary_source_url,
+                width="stretch",
             )
+        if action_columns[2].button(
+            "忽略 7 天",
+            key=f"snooze_home_{item.change_point_id}",
+            type="tertiary",
+            width="stretch",
+        ):
+            orchestrator.snooze_change_point(item.change_point_id, days=7)
+            st.toast("已从今日重点隐藏 7 天，可在知识地图中恢复。")
+            st.rerun()
+
+
+def _render_empty_state() -> None:
+    st.markdown(
+        """
+        <div class="today-empty">
+          <strong>今天没有需要优先处理的新变化。</strong>
+          <span>你可以运行今日更新，或继续查看最近变化和已有知识缺口。</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    recent_col, gap_col, _ = st.columns([1.35, 1.35, 3])
+    recent_col.page_link(
+        "pages/inbox.py",
+        label="查看最近 7 天变化",
+        query_params={"view": "changes", "period": "7d"},
+        width="stretch",
+    )
+    gap_col.page_link(
+        "pages/knowledge.py",
+        label="查看现有知识缺口",
+        query_params={"coverage": "GAP", "importance_min": "3"},
+        width="stretch",
+    )
 
 
 render()

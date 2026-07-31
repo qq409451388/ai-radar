@@ -111,6 +111,7 @@ def _apply_additive_migrations(engine: Engine) -> None:
         },
         "change_point": {
             "signal_type": "VARCHAR(32) NOT NULL DEFAULT 'RELEASE'",
+            "followup_snoozed_until": "DATETIME",
         },
     }
     inspector = inspect(engine)

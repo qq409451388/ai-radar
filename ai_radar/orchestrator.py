@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select
 
@@ -18,7 +18,7 @@ from ai_radar.bootstrap import ANALYZE_FAILED, ANALYZE_PENDING
 from ai_radar.config import get_config
 from ai_radar.database import session_scope
 from ai_radar.llm.client import LlmClient
-from ai_radar.models import ProfileSourceFile, SourceItem
+from ai_radar.models import ChangePoint, ProfileSourceFile, SourceItem
 from ai_radar.profile.fact_service import FactService
 from ai_radar.profile.sync_service import ProfileSyncService
 from ai_radar.services.analysis_service import AnalysisService
@@ -288,6 +288,29 @@ def assess_change_point(change_point_id: int) -> dict:
 def requeue_source_item(source_item_id: int) -> dict:
     with session_scope() as session:
         return AnalysisService(session, LlmClient(session)).requeue(source_item_id)
+
+
+def snooze_change_point(change_point_id: int, days: int = 7) -> dict:
+    with session_scope() as session:
+        change_point = session.get(ChangePoint, change_point_id)
+        if change_point is None:
+            raise ValueError(f"change_point {change_point_id} not found")
+        change_point.followup_snoozed_until = datetime.now(timezone.utc) + timedelta(
+            days=days
+        )
+        return {
+            "change_point_id": change_point_id,
+            "snoozed_until": change_point.followup_snoozed_until,
+        }
+
+
+def unsnooze_change_point(change_point_id: int) -> dict:
+    with session_scope() as session:
+        change_point = session.get(ChangePoint, change_point_id)
+        if change_point is None:
+            raise ValueError(f"change_point {change_point_id} not found")
+        change_point.followup_snoozed_until = None
+        return {"change_point_id": change_point_id, "snoozed_until": None}
 
 
 def archive_stale_pending(days: int = 180) -> dict:
