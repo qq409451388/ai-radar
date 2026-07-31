@@ -42,9 +42,17 @@ def test_knowledge_deep_link_opens_selected_change_point(
         app.switch_page("pages/knowledge.py").run()
 
         assert not app.exception
-        assert len(app.expander) == 1
-        assert "MCP authentication" in app.expander[0].label
-        assert app.expander[0].proto.expanded is True
+        headings = [
+            item.value
+            for item in app.markdown
+            if "knowledge-list-heading" in item.value
+        ]
+        assert len(headings) == 1
+        assert "MCP authentication" in headings[0]
+        assert any(
+            "Authentication specification changed." in str(item.value)
+            for item in app.markdown
+        )
         assert any(
             "正在查看首页选中的知识点" in str(item.value)
             for item in app.info

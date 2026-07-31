@@ -45,7 +45,7 @@ def render() -> None:
     st.title("自动化与设置")
     st.markdown(
         '<div class="page-subtitle">'
-        "这里保留运行结果和系统健康度。需要立即重跑时，请使用左侧醒目的“更新中心”。"
+        "这里保留运行结果和系统健康度。需要立即重跑时，请使用左侧醒目的“数据更新中心”。"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -93,7 +93,7 @@ def _render_operations() -> None:
         _job_status_label(jobs[0].status) if jobs else "还没有",
         _job_type_label(jobs[0].job_type) if jobs else None,
     )
-    st.caption("需要完整处理积压时，请点击左侧栏“打开更新中心”，再选择完整更新。")
+    st.caption("需要完整处理积压时，请点击左侧栏“数据更新中心”，再选择完整更新。")
 
     st.markdown("### 自动更新计划")
     scheduled = {
@@ -113,7 +113,7 @@ def _render_operations() -> None:
                     f"下次：{fmt_dt(getattr(job, 'next_run_time', None))}"
                 )
         st.caption(
-            "自动更新只在 AI Radar 保持运行时执行。错过计划后，可从左侧更新中心手动补跑。"
+            "自动更新只在 AI Radar 保持运行时执行。错过计划后，可从左侧数据更新中心手动补跑。"
         )
     else:
         st.info("自动更新目前已关闭；手动更新仍可正常使用。")

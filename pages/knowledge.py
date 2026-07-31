@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from html import escape
+from math import ceil
 
 import streamlit as st
 from sqlalchemy import or_, select
@@ -59,6 +60,7 @@ SIGNAL_GROUPS = [
         "常规发布、升级、修复和体验变化。保留追溯，但不与设计信号混排。",
     ),
 ]
+KNOWLEDGE_PAGE_SIZE = 20
 
 
 def render() -> None:
@@ -246,13 +248,15 @@ def render() -> None:
             cov = latest_coverage(session, cp.id)
             level_counts[cov.coverage_level if cov else "NONE"] += 1
 
-        metrics = st.columns(4)
-        for col, level in zip(metrics, LEVEL_LABEL):
-            col.metric(LEVEL_LABEL[level], level_counts[level])
-
-        st.caption(
-            f"当前筛选 {len(cps)} 条活跃知识变化点 · "
-            "已按信号类型分组，组内按领域归档"
+        st.markdown(
+            '<div class="knowledge-brief">'
+            f'<span><strong>{len(cps)}</strong> 当前变化</span>'
+            f'<span><strong>{level_counts["NONE"]}</strong> 未覆盖</span>'
+            f'<span><strong>{level_counts["AWARE"]}</strong> 已关注</span>'
+            f'<span><strong>{level_counts["UNDERSTOOD"]}</strong> 已理解</span>'
+            f'<span><strong>{level_counts["PRACTICED"]}</strong> 已实践</span>'
+            "</div>",
+            unsafe_allow_html=True,
         )
         if target_id is not None:
             target_cols = st.columns([3, 1])
@@ -265,72 +269,107 @@ def render() -> None:
         if not cps:
             st.info("没有符合条件的知识点。可以先去“情报收件箱”分析一批资讯。")
         if cps:
-            visible_groups = [
-                group
-                for group in SIGNAL_GROUPS
-                if not selected_signals or group[0] in selected_signals
-            ]
             grouped = {
                 signal_type: [
                     cp for cp in cps if cp.signal_type == signal_type
                 ]
-                for signal_type, _, _ in visible_groups
+                for signal_type, _, _ in SIGNAL_GROUPS
             }
-            labels = [
-                f"{label} · {len(grouped[signal_type])}"
-                for signal_type, label, _ in visible_groups
+            visible_groups = [
+                group
+                for group in SIGNAL_GROUPS
+                if grouped[group[0]]
             ]
-            default_label = next(
-                (
-                    label
-                    for label, (signal_type, _, _) in zip(labels, visible_groups)
-                    if grouped[signal_type]
-                ),
-                labels[0],
+            group_labels = {
+                signal_type: f"{label} {len(grouped[signal_type])}"
+                for signal_type, label, _description in visible_groups
+            }
+            group_options = [group[0] for group in visible_groups]
+            group_filter_signature = (
+                target_id,
+                selected_topic,
+                selected_level,
+                selected_importance,
+                tuple(selected_signals),
+                selected_period,
+                keyword,
             )
-            group_tabs = st.tabs(
-                labels,
-                default=default_label,
-                key="knowledge_signal_groups",
+            preferred_group = (
+                cps[0].signal_type
+                if cps[0].signal_type in group_options
+                else group_options[0]
             )
-            for tab, (signal_type, _, description) in zip(
-                group_tabs,
-                visible_groups,
+            if (
+                st.session_state.get("_knowledge_group_filter_signature")
+                != group_filter_signature
+                or st.session_state.get("knowledge_signal_group")
+                not in group_options
             ):
-                with tab:
-                    group_items = grouped[signal_type]
-                    st.markdown(
-                        f'<div class="signal-group-intro">{escape(description)}</div>',
-                        unsafe_allow_html=True,
+                st.session_state["_knowledge_group_filter_signature"] = (
+                    group_filter_signature
+                )
+                st.session_state["knowledge_signal_group"] = preferred_group
+            selected_group = st.segmented_control(
+                "知识类型",
+                group_options,
+                format_func=lambda value: group_labels[value],
+                required=True,
+                key="knowledge_signal_group",
+                label_visibility="collapsed",
+                width="stretch",
+            )
+            description = next(
+                group[2]
+                for group in visible_groups
+                if group[0] == selected_group
+            )
+            st.markdown(
+                f'<div class="signal-group-intro">{escape(description)}</div>',
+                unsafe_allow_html=True,
+            )
+
+            group_items = grouped[selected_group]
+            page_signature = (
+                group_filter_signature,
+                selected_group,
+                tuple(cp.id for cp in group_items),
+            )
+            if (
+                st.session_state.get("_knowledge_page_signature")
+                != page_signature
+            ):
+                st.session_state["_knowledge_page_signature"] = page_signature
+                st.session_state["knowledge_page"] = 1
+            page = _knowledge_pagination(len(group_items))
+            page_items = group_items[
+                (page - 1) * KNOWLEDGE_PAGE_SIZE:
+                page * KNOWLEDGE_PAGE_SIZE
+            ]
+
+            items_by_topic: dict[str, list[ChangePoint]] = {}
+            for cp in page_items:
+                topic_name = topic_names.get(cp.topic_id, "未分类")
+                items_by_topic.setdefault(topic_name, []).append(cp)
+
+            for topic_name, topic_items in items_by_topic.items():
+                st.markdown(
+                    f"""
+                    <div class="signal-topic-heading">
+                      <span>{escape(topic_name)}</span>
+                      <small>本页 {len(topic_items)} 条</small>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                for cp in topic_items:
+                    selected_id = _render_change_point(
+                        session,
+                        cp,
+                        topic_names,
+                        expanded=cp.id == target_id,
                     )
-                    if not group_items:
-                        st.info("当前筛选条件下，这一类还没有知识变化点。")
-                        continue
-
-                    items_by_topic: dict[str, list[ChangePoint]] = {}
-                    for cp in group_items:
-                        topic_name = topic_names.get(cp.topic_id, "未分类")
-                        items_by_topic.setdefault(topic_name, []).append(cp)
-
-                    for topic_name, topic_items in items_by_topic.items():
-                        st.markdown(
-                            f"""
-                            <div class="signal-topic-heading">
-                              <span>{escape(topic_name)}</span>
-                              <small>{len(topic_items)} 条</small>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-                        for cp in topic_items:
-                            selected_id = _render_change_point(
-                                session,
-                                cp,
-                                topic_names,
-                                expanded=cp.id == target_id,
-                            )
-                            if selected_id is not None:
-                                reassess_id = selected_id
+                    if selected_id is not None:
+                        reassess_id = selected_id
 
     if reassess_id is not None:
         with st.spinner("正在用最新个人事实重新评估…"):
@@ -348,19 +387,59 @@ def _render_change_point(
 ) -> int | None:
     cov = latest_coverage(session, cp.id)
     level = cov.coverage_level if cov else "NONE"
-    selected_id: int | None = None
-    with st.expander(
-        f"{'●' if cp.importance == 5 else '◆' if cp.importance == 3 else '·'} "
-        f"{cp.title} · {LEVEL_LABEL[level]}",
-        expanded=expanded,
+    is_open = (
+        expanded
+        or st.session_state.get("_knowledge_open_change_id") == cp.id
+    )
+    with st.container(
+        border=True,
+        key=f"knowledge_change_card_{cp.id}",
     ):
-        meta_cols = st.columns([2.1, 1.1, 1, 1, 1])
-        meta_cols[0].caption(topic_names.get(cp.topic_id, "未分类"))
-        meta_cols[1].caption(signal_type_label(cp.signal_type))
-        meta_cols[2].caption(f"重要度 {cp.importance}")
-        meta_cols[3].caption(f"发现 {fmt_dt(cp.first_seen_at)}")
-        meta_cols[4].markdown(
-            f'<span class="pill {level.lower()}">{LEVEL_LABEL[level]}</span>',
+        heading_col, action_col = st.columns(
+            [5.2, .8],
+            vertical_alignment="center",
+        )
+        importance_class = (
+            "critical"
+            if cp.importance >= 5
+            else "important"
+            if cp.importance >= 3
+            else "normal"
+        )
+        heading_col.markdown(
+            '<div class="knowledge-list-heading">'
+            '<div class="knowledge-list-meta">'
+            f'<span class="knowledge-importance {importance_class}">'
+            f"重要度 {cp.importance}</span>"
+            f"<span>{escape(signal_type_label(cp.signal_type))}</span>"
+            f"<span>{escape(topic_names.get(cp.topic_id, '未分类'))}</span>"
+            f"<span>发现 {escape(fmt_dt(cp.first_seen_at))}</span>"
+            "</div>"
+            '<div class="knowledge-list-title">'
+            f"{escape(cp.title)}"
+            f'<span class="knowledge-level {level.lower()}">'
+            f"{escape(LEVEL_LABEL[level])}</span>"
+            "</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        if expanded:
+            action_col.caption("已展开")
+        elif action_col.button(
+            "收起" if is_open else "查看",
+            key=f"toggle_knowledge_change_{cp.id}",
+            width="stretch",
+        ):
+            if is_open:
+                st.session_state.pop("_knowledge_open_change_id", None)
+            else:
+                st.session_state["_knowledge_open_change_id"] = cp.id
+            st.rerun()
+        if not is_open:
+            return None
+
+        st.markdown(
+            '<div class="knowledge-detail-divider"></div>',
             unsafe_allow_html=True,
         )
         st.markdown("#### 发生了什么")
@@ -405,7 +484,7 @@ def _render_change_point(
                 key=f"assess_cp_{cp.id}",
                 width="content",
             ):
-                selected_id = cp.id
+                return cp.id
 
         with history_tab:
             history = list(
@@ -483,7 +562,42 @@ def _render_change_point(
                     cp.followup_snoozed_until = None
                     st.success("已恢复，该知识点可以重新进入今日重点。")
         st.caption(f"event_key · {escape(cp.event_key)}")
-    return selected_id
+    return None
+
+
+def _knowledge_pagination(total: int) -> int:
+    total_pages = max(1, ceil(total / KNOWLEDGE_PAGE_SIZE))
+    page = min(
+        total_pages,
+        max(1, int(st.session_state.get("knowledge_page", 1))),
+    )
+    st.session_state["knowledge_page"] = page
+    start = (page - 1) * KNOWLEDGE_PAGE_SIZE + 1
+    end = min(page * KNOWLEDGE_PAGE_SIZE, total)
+    info_col, previous_col, next_col = st.columns(
+        [4.8, .8, .8],
+        vertical_alignment="center",
+    )
+    info_col.caption(f"共 {total} 条 · 当前 {start}–{end}")
+    if previous_col.button(
+        "上一页",
+        key="knowledge_previous_page",
+        width="stretch",
+        disabled=page <= 1,
+    ):
+        st.session_state["knowledge_page"] = page - 1
+        st.session_state.pop("_knowledge_open_change_id", None)
+        st.rerun()
+    if next_col.button(
+        "下一页",
+        key="knowledge_next_page",
+        width="stretch",
+        disabled=page >= total_pages,
+    ):
+        st.session_state["knowledge_page"] = page + 1
+        st.session_state.pop("_knowledge_open_change_id", None)
+        st.rerun()
+    return page
 
 
 def _query_int(key: str) -> int | None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 from sqlalchemy import func, select
@@ -133,7 +134,7 @@ def render() -> None:
                 )
 
             st.divider()
-            left, right = st.columns([1.15, 1])
+            left, right = st.columns([1.45, 1])
             with left:
                 st.markdown("### 领域证据分布")
                 counts = Counter(
@@ -146,7 +147,40 @@ def render() -> None:
                             for name, count in counts.most_common()
                         ]
                     )
-                    st.bar_chart(data.set_index("领域"), horizontal=True)
+                    chart_height = max(220, min(460, len(data) * 38))
+                    chart = (
+                        alt.Chart(data)
+                        .mark_bar(
+                            color="#5b5bd6",
+                            cornerRadiusEnd=5,
+                            size=18,
+                        )
+                        .encode(
+                            y=alt.Y(
+                                "领域:N",
+                                sort=alt.SortField(
+                                    field="事实数",
+                                    order="descending",
+                                ),
+                                axis=alt.Axis(
+                                    title=None,
+                                    labelLimit=260,
+                                    labelPadding=10,
+                                ),
+                            ),
+                            x=alt.X(
+                                "事实数:Q",
+                                axis=alt.Axis(
+                                    title=None,
+                                    tickMinStep=1,
+                                    gridColor="#eceef3",
+                                ),
+                            ),
+                            tooltip=["领域:N", "事实数:Q"],
+                        )
+                        .properties(height=chart_height)
+                    )
+                    st.altair_chart(chart, width="stretch")
                 else:
                     st.info("还没有事实记录。先同步 GPT 记忆。")
             with right:

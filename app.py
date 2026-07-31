@@ -39,8 +39,9 @@ def close_update_center() -> None:
 
 
 @st.dialog(
-    "更新中心",
+    "数据更新中心",
     width="large",
+    icon=":material/radar:",
     on_dismiss=close_update_center,
 )
 def render_update_center() -> None:
@@ -129,7 +130,7 @@ def render_sidebar_status() -> None:
 def render_sidebar_pipeline_status() -> None:
     snapshot = get_active_pipeline_snapshot()
     if snapshot is None:
-        label = "打开更新中心"
+        label = "数据更新中心"
         help_text = "点击后选择更新范围并开始任务"
     else:
         current = next(
@@ -142,12 +143,13 @@ def render_sidebar_pipeline_status() -> None:
         )
         current_label = current["label"] if current else "正在准备"
         percent = int(snapshot["progress"] * 100)
-        label = f"查看更新进度 · {percent}%"
+        label = f"数据更新中心 · {percent}%"
         help_text = f"{snapshot['pipeline_label']} · {current_label}"
     if st.button(
         label,
         width="stretch",
         key="sidebar_update_center",
+        icon=":material/radar:",
         help=help_text,
     ):
         # Persist the open state across full-app reruns. Pipeline startup and

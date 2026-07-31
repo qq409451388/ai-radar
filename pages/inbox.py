@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from html import escape
+from math import ceil
 
 import streamlit as st
 from sqlalchemy import func, or_, select
@@ -33,11 +35,20 @@ STATUS_LABEL = {
     "IGNORED": "已过滤/归档",
     "FAILED": "分析失败",
 }
+SOURCE_TONE = {
+    "RSS": "rss",
+    "WEB_PAGE": "web",
+    "GITHUB_RELEASE": "release",
+    "GITHUB_COMMIT": "commit",
+}
+PAGE_SIZE = 20
 
 
 def render() -> None:
     cfg = get_config()
     query_view = st.query_params.get("view", "design")
+    if query_view not in {"design", "changes", "queue", "done"}:
+        query_view = "design"
     query_period = st.query_params.get("period")
     query_topic = _query_int("topic")
     query_signals = [
@@ -61,13 +72,15 @@ def render() -> None:
                 )
             ).all()
         )
-        source_count = session.scalar(
-            select(func.count(SourceConfig.id)).where(SourceConfig.enabled == True)  # noqa: E712
-        ) or 0
         design_count = session.scalar(
             select(func.count(ChangePoint.id)).where(
                 ChangePoint.status == "ACTIVE",
                 ChangePoint.signal_type.in_(DESIGN_SIGNAL_TYPES),
+            )
+        ) or 0
+        change_count = session.scalar(
+            select(func.count(ChangePoint.id)).where(
+                ChangePoint.status == "ACTIVE"
             )
         ) or 0
         oldest_pending = session.scalar(
@@ -76,16 +89,21 @@ def render() -> None:
             )
         )
 
-    cols = st.columns(4)
-    cols[0].metric("待分析", counts.get("PENDING", 0))
-    cols[1].metric("设计信号", design_count)
-    cols[2].metric("自动过滤", counts.get("IGNORED", 0))
-    cols[3].metric("启用来源", source_count)
+    st.markdown(
+        '<div class="inbox-brief">'
+        f'<span><strong>{counts.get("PENDING", 0)}</strong> 待分析</span>'
+        f'<span><strong>{counts.get("SUCCESS", 0)}</strong> 已形成知识</span>'
+        f'<span><strong>{counts.get("IGNORED", 0)}</strong> 已归档</span>'
+        f'<span class="{"has-error" if counts.get("FAILED", 0) else ""}">'
+        f'<strong>{counts.get("FAILED", 0)}</strong> 分析失败</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     active_pipeline = get_active_pipeline_snapshot()
-    action_cols = st.columns([1.5, 1.2, 3.1])
+    action_cols = st.columns([1.35, 4.65], vertical_alignment="center")
     if action_cols[0].button(
-        f"后台更新情报（每批 {cfg.analyze_batch_size}）",
+        "更新情报",
         type="primary",
         width="stretch",
         disabled=active_pipeline is not None,
@@ -93,54 +111,55 @@ def render() -> None:
         enqueue_pipeline("INTELLIGENCE")
         st.toast("情报更新已在后台启动", icon="🚀")
         st.rerun()
-    if action_cols[1].button("归档 180 天前积压", width="stretch"):
-        result = orchestrator.archive_stale_pending(180)
-        st.success(f"已归档 {result['archived']} 条历史积压，可在“已处理”中查看。")
-        st.rerun()
     if active_pipeline:
-        action_cols[2].caption(
+        action_cols[1].caption(
             f"{active_pipeline['pipeline_label']}正在后台运行；切换页面不会中断。"
         )
     else:
-        action_cols[2].caption(
-            f"最老待处理资讯：{fmt_dt(oldest_pending)}。"
-            "归档只改变处理状态，不删除原始数据。"
+        action_cols[1].caption(
+            f"每次自动处理全部积压（并发 {cfg.ai_concurrency}）"
+            f" · 最老待处理资讯：{fmt_dt(oldest_pending)}"
         )
 
-    tab_labels = [
-        f"设计信号 · {design_count}",
-        "全部变化",
-        f"待处理队列 · {counts.get('PENDING', 0)}",
-        "已处理与失败",
-    ]
-    default_tab = {
-        "design": tab_labels[0],
-        "changes": tab_labels[1],
-        "queue": tab_labels[2],
-        "done": tab_labels[3],
-    }.get(query_view, tab_labels[0])
-    tab_design, tab_changes, tab_queue, tab_done = st.tabs(
-        tab_labels,
-        default=default_tab,
-        key="inbox_views",
+    view_labels = {
+        "design": f"设计信号 {design_count}",
+        "changes": f"全部变化 {change_count}",
+        "queue": f"待处理 {counts.get('PENDING', 0)}",
+        "done": (
+            "已处理 "
+            f"{counts.get('SUCCESS', 0) + counts.get('IGNORED', 0) + counts.get('FAILED', 0)}"
+        ),
+    }
+    view_signature = st.session_state.get("_inbox_view_query")
+    if view_signature != query_view:
+        st.session_state["_inbox_view_query"] = query_view
+        st.session_state["inbox_view"] = query_view
+    selected_view = st.segmented_control(
+        "查看内容",
+        list(view_labels),
+        format_func=lambda value: view_labels[value],
+        required=True,
+        key="inbox_view",
+        label_visibility="collapsed",
+        width="stretch",
     )
 
-    with tab_design:
+    if selected_view == "design":
         _render_changes(
             design_only=True,
             query_period=query_period,
             query_topic=query_topic,
             query_signals=query_signals,
         )
-    with tab_changes:
+    elif selected_view == "changes":
         _render_changes(
             query_period=query_period,
             query_topic=query_topic,
             query_signals=query_signals,
         )
-    with tab_queue:
+    elif selected_view == "queue":
         _render_items(statuses=["PENDING"])
-    with tab_done:
+    else:
         _render_items(statuses=["SUCCESS", "IGNORED", "FAILED"])
 
 
@@ -155,6 +174,15 @@ def _render_changes(
     with session_scope() as session:
         topics = list(session.execute(select(Topic).order_by(Topic.id)).scalars())
         topic_names = {topic.id: topic.name for topic in topics}
+        configured_sources = list(
+            session.execute(select(SourceConfig).order_by(SourceConfig.name)).scalars()
+        )
+        source_names = {
+            source.id: source.name for source in configured_sources
+        }
+        source_types = {
+            source.id: source.source_type for source in configured_sources
+        }
         topic_options = [None] + [topic.id for topic in topics]
         signal_options = [
             "STANDARD",
@@ -227,31 +255,95 @@ def _render_changes(
             stmt = stmt.where(ChangePoint.topic_id == selected_topic)
         if selected_signals:
             stmt = stmt.where(ChangePoint.signal_type.in_(selected_signals))
-        cps = list(session.execute(stmt).scalars())
+
+        filter_signature = (
+            range_label,
+            selected_topic,
+            tuple(selected_signals),
+        )
+        page_key = f"inbox_change_page_{view_key}"
+        _reset_page_on_filter_change(
+            page_key,
+            filter_signature,
+        )
+        total = int(
+            session.scalar(
+                select(func.count()).select_from(
+                    stmt.order_by(None).subquery()
+                )
+            )
+            or 0
+        )
+        page = _pagination(total, page_key)
+        cps = list(
+            session.execute(
+                stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+            ).scalars()
+        )
         cps.sort(key=signal_sort_key, reverse=True)
         if not cps:
-            st.info("这个时间范围内还没有提炼出知识变化。先运行一批分析。")
+            st.info("当前筛选下没有知识变化。可以调整时间或信号类型。")
             return
         for cp in cps:
             cov = latest_coverage(session, cp.id)
             level = cov.coverage_level if cov else "NONE"
-            with st.container(border=True):
-                title_col, meta_col = st.columns([4, 1.2])
-                title_col.markdown(f"### {cp.title}")
-                meta_col.markdown(
-                    f"`{signal_type_label(cp.signal_type)}`  \n"
-                    f"`重要度 {cp.importance}`  \n"
-                    f"`{level}`"
+            sources = sources_for_change_point(session, cp.id)
+            source_name, source_tone, extra_sources = _primary_source(
+                sources,
+                source_names,
+                source_types,
+            )
+            is_open = st.session_state.get("_inbox_open_change_id") == cp.id
+            with st.container(
+                border=True,
+                key=f"inbox_change_card_{cp.id}",
+            ):
+                title_col, action_col = st.columns(
+                    [5.2, .8],
+                    vertical_alignment="center",
                 )
-                st.caption(
-                    f"{topic_names.get(cp.topic_id, '未分类')} · "
-                    f"首次发现 {fmt_dt(cp.first_seen_at)}"
+                title_col.markdown(
+                    _item_heading(
+                        cp.title or f"知识变化 #{cp.id}",
+                        source_name,
+                        source_tone,
+                        (
+                            f"{signal_type_label(cp.signal_type)} · "
+                            f"{topic_names.get(cp.topic_id, '未分类')} · "
+                            f"{fmt_dt(cp.first_seen_at)}"
+                        ),
+                        status_text=f"重要度 {cp.importance}",
+                        status_class=(
+                            "priority" if cp.importance >= 5 else "processed"
+                        ),
+                        extra_sources=extra_sources,
+                    ),
+                    unsafe_allow_html=True,
+                )
+                if action_col.button(
+                    "收起" if is_open else "查看",
+                    key=f"toggle_change_{cp.id}",
+                    width="stretch",
+                ):
+                    if is_open:
+                        st.session_state.pop("_inbox_open_change_id", None)
+                    else:
+                        st.session_state["_inbox_open_change_id"] = cp.id
+                    st.rerun()
+                if not is_open:
+                    continue
+
+                st.markdown(
+                    '<div class="inbox-detail-divider"></div>',
+                    unsafe_allow_html=True,
                 )
                 st.write(cp.summary or "暂无摘要")
                 if cp.why_it_matters:
                     st.info(cp.why_it_matters, icon="💡")
-                st.caption(f"建议下一步：{signal_action_hint(cp.signal_type)}")
-                sources = sources_for_change_point(session, cp.id)
+                st.caption(
+                    f"与你的关系：{level} · "
+                    f"建议下一步：{signal_action_hint(cp.signal_type)}"
+                )
                 if len(sources) >= 2:
                     st.success(f"已有 {len(sources)} 个来源共同确认这个变化。")
                 if sources:
@@ -264,28 +356,73 @@ def _render_changes(
 
 
 def _render_items(statuses: list[str]) -> None:
+    view_key = "queue" if statuses == ["PENDING"] else "done"
     with session_scope() as session:
         sources = list(
             session.execute(select(SourceConfig).order_by(SourceConfig.name)).scalars()
         )
         source_names = {source.id: source.name for source in sources}
-        filter_cols = st.columns([1.5, 1.2, 2.3])
+        source_types = {source.id: source.source_type for source in sources}
+        status_counts = dict(
+            session.execute(
+                select(
+                    SourceItem.analyze_status,
+                    func.count(SourceItem.id),
+                )
+                .where(SourceItem.analyze_status.in_(statuses))
+                .group_by(SourceItem.analyze_status)
+            ).all()
+        )
+
+        if len(statuses) > 1:
+            status_labels = {
+                status: f"{STATUS_LABEL[status]} {status_counts.get(status, 0)}"
+                for status in statuses
+            }
+            selected_status = st.segmented_control(
+                "处理状态",
+                statuses,
+                default=statuses[0],
+                required=True,
+                format_func=lambda value: status_labels[value],
+                key="inbox_done_status",
+                label_visibility="collapsed",
+                width="stretch",
+            )
+        else:
+            selected_status = statuses[0]
+            archive_col, note_col = st.columns(
+                [1.25, 4.75],
+                vertical_alignment="center",
+            )
+            if archive_col.button(
+                "归档 180 天前积压",
+                key="archive_stale_inbox",
+                width="stretch",
+            ):
+                result = orchestrator.archive_stale_pending(180)
+                st.toast(
+                    f"已归档 {result['archived']} 条历史积压",
+                    icon="✅",
+                )
+                st.rerun()
+            note_col.caption(
+                "归档只改变处理状态，不删除原始资讯。"
+            )
+
+        filter_cols = st.columns([1.5, 3.5])
         selected_source = filter_cols[0].selectbox(
             "来源",
             [None] + [source.id for source in sources],
             format_func=lambda value: "全部来源"
             if value is None
             else source_names[value],
-            key=f"source_{'_'.join(statuses)}",
+            key=f"inbox_source_{view_key}",
         )
-        selected_status = filter_cols[1].selectbox(
-            "状态",
-            statuses,
-            format_func=lambda value: STATUS_LABEL[value],
-            key=f"status_{'_'.join(statuses)}",
-        )
-        keyword = filter_cols[2].text_input(
-            "搜索标题或正文", key=f"keyword_{'_'.join(statuses)}"
+        keyword = filter_cols[1].text_input(
+            "搜索标题或正文",
+            key=f"inbox_keyword_{view_key}",
+            placeholder="输入关键词",
         )
         stmt = (
             select(SourceItem)
@@ -294,7 +431,6 @@ def _render_items(statuses: list[str]) -> None:
                 SourceItem.published_at.desc().nullslast(),
                 SourceItem.collected_at.desc(),
             )
-            .limit(100)
         )
         if selected_source is not None:
             stmt = stmt.where(SourceItem.source_config_id == selected_source)
@@ -306,7 +442,28 @@ def _render_items(statuses: list[str]) -> None:
                     SourceItem.raw_content.ilike(like),
                 )
             )
-        items = list(session.execute(stmt).scalars())
+
+        filter_signature = (
+            selected_status,
+            selected_source,
+            keyword.strip(),
+        )
+        page_key = f"inbox_item_page_{view_key}"
+        _reset_page_on_filter_change(page_key, filter_signature)
+        total = int(
+            session.scalar(
+                select(func.count()).select_from(
+                    stmt.order_by(None).subquery()
+                )
+            )
+            or 0
+        )
+        page = _pagination(total, page_key)
+        items = list(
+            session.execute(
+                stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+            ).scalars()
+        )
         links = {}
         if items:
             links = dict(
@@ -322,15 +479,60 @@ def _render_items(statuses: list[str]) -> None:
                 ).all()
             )
 
-    st.caption(f"显示最近 {len(items)} 条")
+    if not items:
+        empty_copy = (
+            "没有等待分析的资讯。运行更新后，新内容会出现在这里。"
+            if selected_status == "PENDING"
+            else f"当前没有{STATUS_LABEL[selected_status]}的资讯。"
+        )
+        st.info(empty_copy)
+        return
+
     for item in items:
-        with st.expander(
-            f"{STATUS_LABEL[item.analyze_status]} · {item.title or item.url or f'#{item.id}'}"
+        source_name = source_names.get(item.source_config_id, "未知来源")
+        source_tone = SOURCE_TONE.get(
+            source_types.get(item.source_config_id, ""),
+            "neutral",
+        )
+        is_open = st.session_state.get("_inbox_open_item_id") == item.id
+        with st.container(
+            border=True,
+            key=f"inbox_item_card_{item.id}",
         ):
-            st.caption(
-                f"{source_names.get(item.source_config_id, '未知来源')} · "
-                f"发布 {fmt_dt(item.published_at)} · "
-                f"重试 {item.retry_count} 次"
+            title_col, action_col = st.columns(
+                [5.2, .8],
+                vertical_alignment="center",
+            )
+            meta = f"发布 {fmt_dt(item.published_at)}"
+            if item.retry_count:
+                meta += f" · 已重试 {item.retry_count} 次"
+            title_col.markdown(
+                _item_heading(
+                    item.title or item.url or f"资讯 #{item.id}",
+                    source_name,
+                    source_tone,
+                    meta,
+                    status_text=STATUS_LABEL[item.analyze_status],
+                    status_class=_status_class(item.analyze_status),
+                ),
+                unsafe_allow_html=True,
+            )
+            if action_col.button(
+                "收起" if is_open else "查看",
+                key=f"toggle_item_{item.id}",
+                width="stretch",
+            ):
+                if is_open:
+                    st.session_state.pop("_inbox_open_item_id", None)
+                else:
+                    st.session_state["_inbox_open_item_id"] = item.id
+                st.rerun()
+            if not is_open:
+                continue
+
+            st.markdown(
+                '<div class="inbox-detail-divider"></div>',
+                unsafe_allow_html=True,
             )
             if item.url:
                 st.markdown(f"[打开官方来源]({item.url})")
@@ -347,6 +549,107 @@ def _render_items(statuses: list[str]) -> None:
                 if st.button("重新加入分析队列", key=f"requeue_{item.id}"):
                     orchestrator.requeue_source_item(item.id)
                     st.rerun()
+
+
+def _item_heading(
+    title: str,
+    source_name: str,
+    source_tone: str,
+    meta: str,
+    *,
+    status_text: str,
+    status_class: str,
+    extra_sources: int = 0,
+) -> str:
+    source_suffix = f" +{extra_sources}" if extra_sources else ""
+    return (
+        '<div class="inbox-list-heading">'
+        '<div class="inbox-list-meta">'
+        f'<span class="inbox-status {escape(status_class)}">'
+        f"{escape(status_text)}</span>"
+        f"<span>{escape(meta)}</span>"
+        "</div>"
+        '<div class="inbox-list-title">'
+        f"{escape(title)} "
+        f'<span class="inbox-source-inline {escape(source_tone)}">'
+        f"· {escape(source_name)}{source_suffix}</span>"
+        "</div>"
+        "</div>"
+    )
+
+
+def _primary_source(
+    items: list[SourceItem],
+    source_names: dict[int, str],
+    source_types: dict[int, str],
+) -> tuple[str, str, int]:
+    source_ids = list(
+        dict.fromkeys(item.source_config_id for item in items)
+    )
+    if not source_ids:
+        return "来源待补充", "neutral", 0
+    source_id = source_ids[0]
+    return (
+        source_names.get(source_id, "未知来源"),
+        SOURCE_TONE.get(source_types.get(source_id, ""), "neutral"),
+        max(0, len(source_ids) - 1),
+    )
+
+
+def _status_class(status: str) -> str:
+    return {
+        "PENDING": "pending",
+        "SUCCESS": "processed",
+        "IGNORED": "archived",
+        "FAILED": "failed",
+    }.get(status, "neutral")
+
+
+def _reset_page_on_filter_change(
+    page_key: str,
+    signature: tuple,
+) -> None:
+    signature_key = f"_{page_key}_filter"
+    if st.session_state.get(signature_key) != signature:
+        st.session_state[signature_key] = signature
+        st.session_state[page_key] = 1
+
+
+def _pagination(total: int, page_key: str) -> int:
+    total_pages = max(1, ceil(total / PAGE_SIZE))
+    page = min(
+        total_pages,
+        max(1, int(st.session_state.get(page_key, 1))),
+    )
+    st.session_state[page_key] = page
+    start = (page - 1) * PAGE_SIZE + 1 if total else 0
+    end = min(page * PAGE_SIZE, total)
+    info_col, previous_col, next_col = st.columns(
+        [4.8, .8, .8],
+        vertical_alignment="center",
+    )
+    info_col.caption(
+        f"共 {total} 条 · 当前 {start}–{end}"
+        if total
+        else "当前没有内容"
+    )
+    if previous_col.button(
+        "上一页",
+        key=f"{page_key}_previous",
+        width="stretch",
+        disabled=page <= 1,
+    ):
+        st.session_state[page_key] = page - 1
+        st.rerun()
+    if next_col.button(
+        "下一页",
+        key=f"{page_key}_next",
+        width="stretch",
+        disabled=page >= total_pages,
+    ):
+        st.session_state[page_key] = page + 1
+        st.rerun()
+    return page
 
 
 def _query_int(key: str) -> int | None:
