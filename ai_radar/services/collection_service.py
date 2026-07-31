@@ -94,17 +94,23 @@ class CollectionService:
         A successful test is required before a newly added source can be
         enabled. Existing sources migrated from older versions stay trusted.
         """
+        result = self.probe_source(source_config_id)
+        return self.apply_source_test_result(source_config_id, result)
+
+    def probe_source(self, source_config_id: int) -> dict:
+        """Probe a source without changing database state.
+
+        Keeping the network request separate from persistence lets bulk tests
+        run concurrently while their SQLite writes remain serialized.
+        """
         cfg = self.session.get(SourceConfig, source_config_id)
         if cfg is None:
             raise ValueError(f"source_config {source_config_id} not found")
-        tested_at = datetime.now(timezone.utc)
         try:
             collector = self._collector_for(cfg)
             preview = list(islice(collector.collect(), 3))
-            cfg.test_status = "PASSED"
-            cfg.last_tested_at = tested_at
-            cfg.last_error = ""
             return {
+                "source_config_id": cfg.id,
                 "source": cfg.name,
                 "status": "PASSED",
                 "items_seen": len(preview),
@@ -113,19 +119,34 @@ class CollectionService:
                 ],
             }
         except Exception as exc:
-            cfg.test_status = "FAILED"
-            cfg.last_tested_at = tested_at
-            cfg.last_error = f"{type(exc).__name__}: {exc}"
-            # A failed re-test must not leave a source collecting silently.
-            cfg.enabled = False
             log.warning("test source %s failed: %s", cfg.name, exc)
             return {
+                "source_config_id": cfg.id,
                 "source": cfg.name,
                 "status": "FAILED",
                 "items_seen": 0,
                 "sample_titles": [],
-                "error": cfg.last_error,
+                "error": f"{type(exc).__name__}: {exc}",
             }
+
+    def apply_source_test_result(
+        self,
+        source_config_id: int,
+        result: dict,
+    ) -> dict:
+        """Persist a probe result; callers may serialize these writes."""
+        cfg = self.session.get(SourceConfig, source_config_id)
+        if cfg is None:
+            raise ValueError(f"source_config {source_config_id} not found")
+        cfg.test_status = result["status"]
+        cfg.last_tested_at = datetime.now(timezone.utc)
+        if result["status"] == "PASSED":
+            cfg.last_error = ""
+        else:
+            cfg.last_error = result.get("error") or "无法访问该来源"
+            # A failed re-test must not leave a source collecting silently.
+            cfg.enabled = False
+        return result
 
     def _collect_one(self, cfg: SourceConfig) -> tuple[int, int]:
         collector = self._collector_for(cfg)

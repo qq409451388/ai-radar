@@ -219,4 +219,13 @@ else:
             ],
         }
     )
+
+# A browser tab keeps its last URL (for example `/automation`) when the
+# Streamlit process restarts. On the first run of the new session, explicitly
+# select the product entry page instead of restoring that stale route. The
+# marker survives normal page navigation, so later clicks are never hijacked.
+if not st.session_state.get("_startup_page_selected"):
+    st.session_state["_startup_page_selected"] = True
+    st.switch_page(setup_page if needs_setup else home_page)
+
 navigation.run()

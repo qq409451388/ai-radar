@@ -24,6 +24,7 @@ from ai_radar.models import (
     JobLog,
     KnowledgeCoverage,
     ProfileSourceFile,
+    SourceConfig,
     SourceItem,
 )
 from ai_radar.profile.fact_service import FactService
@@ -57,6 +58,78 @@ def collect_one_source(source_config_id: int) -> dict:
 def test_source(source_config_id: int) -> dict:
     with session_scope() as session:
         return CollectionService(session).test_source(source_config_id)
+
+
+def test_all_sources(
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
+    """Probe every configured source concurrently and persist results safely."""
+    with session_scope() as session:
+        sources = list(
+            session.execute(
+                select(SourceConfig.id, SourceConfig.name).order_by(
+                    SourceConfig.name
+                )
+            )
+        )
+    total = len(sources)
+    if progress_callback:
+        progress_callback(0, total, "准备测试全部资讯源")
+
+    aggregate = {
+        "total": total,
+        "passed": 0,
+        "failed": 0,
+        "results": [],
+        "concurrency": min(get_config().ai_concurrency, total) if total else 0,
+    }
+    names = {source_id: name for source_id, name in sources}
+    workers = max(1, min(get_config().ai_concurrency, total or 1))
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="ai-radar-source-test",
+    ) as executor:
+        futures = {
+            executor.submit(_probe_source, source_id): source_id
+            for source_id, _name in sources
+        }
+        for future in as_completed(futures):
+            source_id = futures[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                result = {
+                    "source_config_id": source_id,
+                    "source": names[source_id],
+                    "status": "FAILED",
+                    "items_seen": 0,
+                    "sample_titles": [],
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            with session_scope() as session:
+                CollectionService(session).apply_source_test_result(
+                    source_id,
+                    result,
+                )
+            aggregate["results"].append(result)
+            if result["status"] == "PASSED":
+                aggregate["passed"] += 1
+            else:
+                aggregate["failed"] += 1
+            completed = aggregate["passed"] + aggregate["failed"]
+            if progress_callback:
+                progress_callback(
+                    completed,
+                    total,
+                    f"已测试 {completed}/{total}：{names[source_id]}",
+                )
+    aggregate["results"].sort(key=lambda item: item["source"].casefold())
+    return aggregate
+
+
+def _probe_source(source_config_id: int) -> dict:
+    with session_scope() as session:
+        return CollectionService(session).probe_source(source_config_id)
 
 
 def analyze_pending_items(

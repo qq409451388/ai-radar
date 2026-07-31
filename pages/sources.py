@@ -90,8 +90,17 @@ def _render_add_source() -> None:
             )
             topic_id = st.selectbox(
                 "归入领域",
-                [topic.id for topic in topics],
-                format_func=lambda value: topic_names[value],
+                [None, *[topic.id for topic in topics]],
+                index=0,
+                format_func=lambda value: (
+                    "自动分配（推荐）"
+                    if value is None
+                    else topic_names[value]
+                ),
+                help=(
+                    "默认由 AI 根据每条资讯内容判断领域。"
+                    "手动选择后，该领域只作为 AI 无法匹配时的兜底。"
+                ),
             )
             submitted = st.form_submit_button(
                 "保存并去测试",
@@ -142,7 +151,7 @@ def _render_sources() -> None:
         summary = (
             f"{source.name} · "
             f"{TYPE_LABELS.get(source.source_type, source.source_type)} · "
-            f"{topic_names.get(source.default_topic_id, '未分类')} · "
+            f"{topic_names.get(source.default_topic_id, '自动分配')} · "
             f"{collection_status}"
         )
         with st.expander(summary, expanded=False):
@@ -153,7 +162,7 @@ def _render_sources() -> None:
                 unsafe_allow_html=True,
             )
             title_col.caption(
-                f"{topic_names.get(source.default_topic_id, '未分类')} · "
+                f"{topic_names.get(source.default_topic_id, '自动分配')} · "
                 f"最近采集 {fmt_dt(source.last_collected_at)}"
             )
             status_col.markdown(
