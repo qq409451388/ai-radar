@@ -1,0 +1,164 @@
+"""Constants, coverage coefficients and seed/bootstrap logic."""
+from __future__ import annotations
+
+from pathlib import Path
+from datetime import datetime, timezone
+
+import yaml
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ai_radar.config import PROJECT_ROOT
+from ai_radar.models import (
+    SourceConfig,
+    Topic,
+)
+
+# ----- Coverage levels and coefficients (fixed mapping, section 八/十五) -----
+COVERAGE_NONE = "NONE"
+COVERAGE_AWARE = "AWARE"
+COVERAGE_UNDERSTOOD = "UNDERSTOOD"
+COVERAGE_PRACTICED = "PRACTICED"
+
+COVERAGE_COEFFICIENTS: dict[str, float] = {
+    COVERAGE_NONE: 0.00,
+    COVERAGE_AWARE: 0.25,
+    COVERAGE_UNDERSTOOD: 0.65,
+    COVERAGE_PRACTICED: 1.00,
+}
+
+VALID_COVERAGE_LEVELS = set(COVERAGE_COEFFICIENTS.keys())
+
+# ----- Importance levels (section 七.4) -----
+IMPORTANCE_MINOR = 1
+IMPORTANCE_NOTABLE = 3
+IMPORTANCE_MAJOR = 5
+VALID_IMPORTANCE = {IMPORTANCE_MINOR, IMPORTANCE_NOTABLE, IMPORTANCE_MAJOR}
+
+# ----- Evidence types (section 七.7) -----
+EVIDENCE_TYPES = {
+    "DISCUSSION",
+    "RESEARCH",
+    "DESIGN",
+    "DEMO",
+    "IMPLEMENTATION",
+    "PRODUCTION",
+    "DECISION",
+}
+
+# ----- Source types -----
+SOURCE_TYPE_RSS = "RSS"
+SOURCE_TYPE_GITHUB_RELEASE = "GITHUB_RELEASE"
+
+# ----- Statuses -----
+STATUS_ACTIVE = "ACTIVE"
+STATUS_DEPRECATED = "DEPRECATED"
+
+ANALYZE_PENDING = "PENDING"
+ANALYZE_SUCCESS = "SUCCESS"
+ANALYZE_FAILED = "FAILED"
+ANALYZE_IGNORED = "IGNORED"
+
+SYNC_SUCCESS = "SUCCESS"
+SYNC_FAILED = "FAILED"
+
+# ----- Job types -----
+JOB_COLLECT = "collect_sources"
+JOB_ANALYZE = "analyze_items"
+JOB_SYNC_PROFILE = "sync_profile"
+JOB_EXTRACT_FACTS = "extract_facts"
+JOB_ASSESS_NEW = "assess_new_change_points"
+JOB_ASSESS_ALL = "assess_all_change_points"
+JOB_RESCORE = "rescore"
+JOB_SNAPSHOT = "snapshot"
+JOB_MERGE = "merge_change_points"
+
+DEFAULT_SOURCES_PATH = PROJECT_ROOT / "config" / "default_sources.yaml"
+
+
+def load_default_sources_yaml(path: Path = DEFAULT_SOURCES_PATH) -> dict:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def seed_default_data(session: Session, force: bool = False) -> dict:
+    """Seed initial topics and sources if the DB is empty.
+
+    Returns a dict with counts of created topics/sources.
+    """
+    created = {"topics": 0, "sources": 0}
+
+    data = load_default_sources_yaml()
+    if not data:
+        return created
+
+    # ----- Topics -----
+    existing_topic_names = {
+        row[0] for row in session.execute(select(Topic.name)).all()
+    }
+    topic_name_to_id: dict[str, int] = {
+        row.name: row.id for row in session.execute(select(Topic)).scalars()
+    }
+
+    for topic_def in data.get("initial_topics", []):
+        name = topic_def["name"]
+        if name in existing_topic_names:
+            continue
+        topic = Topic(name=name, description=topic_def.get("description", ""))
+        session.add(topic)
+        session.flush()
+        topic_name_to_id[name] = topic.id
+        existing_topic_names.add(name)
+        created["topics"] += 1
+
+    # ----- RSS sources -----
+    existing_source_keys = {
+        (row.source_type, row.url) for row in session.execute(select(SourceConfig)).scalars()
+    }
+
+    def _resolve_topic_id(name: str) -> int | None:
+        return topic_name_to_id.get(name)
+
+    for rss in data.get("rss_sources", []):
+        key = (SOURCE_TYPE_RSS, rss["url"])
+        if key in existing_source_keys:
+            continue
+        topic_id = _resolve_topic_id(rss.get("default_topic", ""))
+        sc = SourceConfig(
+            name=rss["name"],
+            source_type=SOURCE_TYPE_RSS,
+            url=rss["url"],
+            repository="",
+            enabled=bool(rss.get("enabled", False)),
+            default_topic_id=topic_id,
+        )
+        session.add(sc)
+        existing_source_keys.add(key)
+        created["sources"] += 1
+
+    # ----- GitHub release sources -----
+    for gh in data.get("github_release_sources", []):
+        key = (SOURCE_TYPE_GITHUB_RELEASE, gh["url"])
+        if key in existing_source_keys:
+            continue
+        topic_id = _resolve_topic_id(gh.get("default_topic", ""))
+        sc = SourceConfig(
+            name=gh["name"],
+            source_type=SOURCE_TYPE_GITHUB_RELEASE,
+            url=gh["url"],
+            repository=gh.get("repository", ""),
+            enabled=bool(gh.get("enabled", False)),
+            default_topic_id=topic_id,
+        )
+        session.add(sc)
+        existing_source_keys.add(key)
+        created["sources"] += 1
+
+    session.flush()
+    return created
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)

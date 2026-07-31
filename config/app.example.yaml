@@ -1,0 +1,35 @@
+# AI Radar user configuration template.
+# Copy this file to the platform-specific user config directory:
+# - macOS: ~/Library/Application Support/AI Radar/config.yaml
+# - Windows: %APPDATA%\\AI Radar\\config.yaml
+# - Linux: ~/.config/ai-radar/config.yaml
+#
+# Never commit a filled copy of this file.
+
+version: 1
+
+llm:
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  api_key: ""
+  model: qwen-plus
+  timeout_seconds: 120
+
+github:
+  # Fine-grained token with read-only access to the private memory repository.
+  token: ""
+
+profile:
+  repo: ""
+  ref: main
+  path_prefix: ""
+  # Leave empty to reuse github.token.
+  token: ""
+
+app:
+  db_path: data/ai_radar.db
+  timezone: Asia/Shanghai
+  scheduler_enabled: true
+  http_timeout: 20
+  analyze_batch_size: 30
+  score_window_days: 90
+  max_assessment_facts: 24

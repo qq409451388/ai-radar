@@ -1,0 +1,90 @@
+# Default AI information sources.
+# Only official blogs / announcements / official GitHub repositories.
+# Sources that may not have a stable RSS feed are kept disabled by default.
+
+rss_sources:
+  - name: OpenAI Blog
+    url: https://openai.com/blog/rss.xml
+    default_topic: 模型能力与模型路由
+    enabled: false
+
+  - name: Anthropic News
+    url: https://www.anthropic.com/rss.xml
+    default_topic: 模型能力与模型路由
+    enabled: false
+
+  - name: Google AI Blog
+    url: https://blog.google/technology/ai/rss/
+    default_topic: 模型能力与模型路由
+    enabled: false
+
+  - name: QwenLM 官方博客
+    url: https://qwenlm.github.io/feed.xml
+    default_topic: 模型能力与模型路由
+    enabled: true
+
+  - name: 智谱 AI Blog
+    url: https://www.zhipuai.cn/rss.xml
+    default_topic: 模型能力与模型路由
+    enabled: false
+
+github_release_sources:
+  - name: OpenAI Codex
+    url: https://github.com/openai/codex
+    repository: openai/codex
+    default_topic: Coding Agent 与 CLI
+    enabled: true
+
+  - name: Anthropic Claude Code
+    url: https://github.com/anthropics/claude-code
+    repository: anthropics/claude-code
+    default_topic: Coding Agent 与 CLI
+    enabled: true
+
+  - name: QwenLM Qwen Code
+    url: https://github.com/QwenLM/qwen-code
+    repository: QwenLM/qwen-code
+    default_topic: Coding Agent 与 CLI
+    enabled: true
+
+  - name: sst/opencode
+    url: https://github.com/sst/opencode
+    repository: sst/opencode
+    default_topic: Coding Agent 与 CLI
+    enabled: true
+
+  - name: modelcontextprotocol
+    url: https://github.com/modelcontextprotocol
+    repository: modelcontextprotocol/servers
+    default_topic: MCP / Tools / Skills
+    enabled: true
+
+  - name: Spring AI
+    url: https://github.com/spring-projects-experimental/spring-ai
+    repository: spring-projects-experimental/spring-ai
+    default_topic: Java AI 生态
+    enabled: true
+
+  - name: LangChain4j
+    url: https://github.com/langchain4j/langchain4j
+    repository: langchain4j/langchain4j
+    default_topic: Java AI 生态
+    enabled: true
+
+initial_topics:
+  - name: Agent 架构与编排
+    description: 多 Agent 协作、Agent 编排框架、Agent 设计模式、自治 Agent 架构
+  - name: MCP / Tools / Skills
+    description: Model Context Protocol、工具调用、Skill 系统、工具注册与执行
+  - name: Coding Agent 与 CLI
+    description: 编码 Agent、命令行 AI 工具、Codex/Claude Code/Qwen Code 等
+  - name: 模型能力与模型路由
+    description: 模型新能力、上下文长度、模型选择与路由策略、定价变化
+  - name: Memory / 个人知识库
+    description: 长期记忆、跨 Agent 记忆、个人知识库、向量存储与检索
+  - name: 企业 AI 落地
+    description: 企业级 AI 应用、RAG、知识库、生产部署、私有化
+  - name: AI 安全、评测与可观测性
+    description: AI 安全、模型评测、可观测性、防护、对齐
+  - name: Java AI 生态
+    description: Spring AI、LangChain4j、Java 生态 AI 框架与集成
