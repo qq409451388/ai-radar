@@ -39,6 +39,8 @@ class SourceService:
         source = self.session.get(SourceConfig, source_config_id)
         if source is None:
             raise ValueError(f"source_config {source_config_id} not found")
+        if source.is_builtin:
+            raise ValueError("系统内置来源的配置由系统维护，不能编辑")
 
         connection_changed = any(
             (
@@ -72,6 +74,8 @@ class SourceService:
         source = self.session.get(SourceConfig, source_config_id)
         if source is None:
             raise ValueError(f"source_config {source_config_id} not found")
+        if source.is_builtin:
+            raise ValueError("系统内置来源由系统维护，不能删除")
         item_count = self.item_count(source_config_id)
         result = {
             "source_config_id": source.id,

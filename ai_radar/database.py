@@ -88,6 +88,7 @@ def _apply_additive_migrations(engine: Engine) -> None:
     additions: dict[str, dict[str, str]] = {
         "source_config": {
             "path_filter": "VARCHAR(512) NOT NULL DEFAULT ''",
+            "is_builtin": "BOOLEAN NOT NULL DEFAULT 0",
             # Existing sources were already proven by real collection. ORM
             # inserts explicitly start newly added sources as UNTESTED.
             "test_status": "VARCHAR(16) NOT NULL DEFAULT 'PASSED'",

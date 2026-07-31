@@ -59,6 +59,9 @@ class SourceConfig(Base):
     path_filter: Mapped[str] = mapped_column(
         String(512), default="", server_default=""
     )
+    is_builtin: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", index=True
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", index=True)
     default_topic_id: Mapped[int | None] = mapped_column(
         ForeignKey("topic.id", ondelete="SET NULL"), nullable=True, index=True

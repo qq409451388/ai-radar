@@ -132,6 +132,7 @@ def _render_add_source() -> None:
                                 enabled=False,
                                 test_status="UNTESTED",
                                 default_topic_id=topic_id,
+                                is_builtin=False,
                             )
                         )
                     st.session_state["_source_created_name"] = name.strip()
@@ -205,8 +206,10 @@ def _render_sources() -> None:
             source
         )
         kind_label = source_kind_label(source.source_type)
+        ownership_label = "系统内置" if source.is_builtin else "自定义"
         summary = (
             f"{state_icon}　{source.name}　·　"
+            f"{ownership_label}　·　"
             f"{kind_label}　·　"
             f"{TYPE_LABELS.get(source.source_type, source.source_type)}　·　"
             f"{topic_names.get(source.default_topic_id, '自动分配')}　·　"
@@ -222,7 +225,7 @@ def _render_sources() -> None:
                 '<div class="source-detail-meta">'
                 "<div><span>来源属性</span>"
                 f'<strong class="source-kind-{source.source_type.casefold()}">'
-                f"{escape(kind_label)}</strong></div>"
+                f"{escape(kind_label)} · {escape(ownership_label)}</strong></div>"
                 "<div><span>连接状态</span>"
                 f'<strong class="{status_class}">{escape(status_text)}</strong></div>'
                 "<div><span>最近测试</span>"
@@ -250,8 +253,14 @@ def _render_sources() -> None:
                     unsafe_allow_html=True,
                 )
 
-            editing = st.session_state.get("_source_edit_id") == source.id
-            deleting = st.session_state.get("_source_delete_id") == source.id
+            editing = (
+                not source.is_builtin
+                and st.session_state.get("_source_edit_id") == source.id
+            )
+            deleting = (
+                not source.is_builtin
+                and st.session_state.get("_source_delete_id") == source.id
+            )
             if editing:
                 _render_edit_source(source, topics, topic_names)
             elif deleting:
@@ -261,10 +270,19 @@ def _render_sources() -> None:
 
 
 def _render_source_actions(source: SourceConfig, test_status: str) -> None:
-    test_col, enable_col, link_col, edit_col, delete_col = st.columns(
-        [1.15, 1.25, 1.1, .82, .82],
-        vertical_alignment="center",
-    )
+    edit_col = None
+    delete_col = None
+    if source.is_builtin:
+        test_col, enable_col, link_col, lock_col = st.columns(
+            [1.15, 1.25, 1.1, 2],
+            vertical_alignment="center",
+        )
+        lock_col.caption("🔒 系统内置来源，连接配置由系统维护")
+    else:
+        test_col, enable_col, link_col, edit_col, delete_col = st.columns(
+            [1.15, 1.25, 1.1, .82, .82],
+            vertical_alignment="center",
+        )
     if test_col.button(
         "重新测试",
         key=f"test_source_{source.id}",
@@ -303,7 +321,7 @@ def _render_source_actions(source: SourceConfig, test_status: str) -> None:
             source.url,
             width="stretch",
         )
-    if edit_col.button(
+    if edit_col is not None and edit_col.button(
         "编辑",
         key=f"edit_source_{source.id}",
         width="stretch",
@@ -311,7 +329,7 @@ def _render_source_actions(source: SourceConfig, test_status: str) -> None:
         st.session_state["_source_edit_id"] = source.id
         st.session_state.pop("_source_delete_id", None)
         st.rerun()
-    if delete_col.button(
+    if delete_col is not None and delete_col.button(
         "删除",
         key=f"delete_source_{source.id}",
         width="stretch",
@@ -340,6 +358,10 @@ def _render_edit_source(
     topics: list[Topic],
     topic_names: dict[int, str],
 ) -> None:
+    if source.is_builtin:
+        st.session_state.pop("_source_edit_id", None)
+        st.info("系统内置来源的连接配置由系统维护，不能编辑。")
+        return
     with st.container(
         border=True,
         key=f"source_edit_panel_{source.id}",
@@ -433,6 +455,10 @@ def _render_edit_source(
 
 
 def _render_delete_source(source: SourceConfig) -> None:
+    if source.is_builtin:
+        st.session_state.pop("_source_delete_id", None)
+        st.info("系统内置来源不能删除；不需要采集时可以关闭自动采集。")
+        return
     with session_scope() as session:
         item_count = SourceService(session).item_count(source.id)
     with st.container(

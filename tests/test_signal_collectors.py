@@ -54,6 +54,7 @@ def test_design_sources_are_seeded_with_filters(seeded_session):
     }
 
     assert sources["Anthropic Engineering"].source_type == "WEB_PAGE"
+    assert sources["Anthropic Engineering"].is_builtin is True
     assert sources["Anthropic Engineering"].path_filter == "/engineering/"
     assert sources["Agent Skills Specification"].source_type == "GITHUB_COMMIT"
     assert sources["Agent Skills Specification"].path_filter == "spec"
@@ -78,6 +79,7 @@ def test_default_developer_communities_are_seeded_as_unverified_discussions(
     assert expected.issubset(sources)
     for name in expected:
         assert sources[name].source_type == SOURCE_TYPE_COMMUNITY
+        assert sources[name].is_builtin is True
         assert sources[name].enabled is False
         assert sources[name].test_status == "UNTESTED"
 
@@ -96,6 +98,7 @@ def test_existing_juejin_page_is_migrated_to_community_adapter(session):
     seed_default_data(session)
 
     assert old_source.source_type == SOURCE_TYPE_COMMUNITY
+    assert old_source.is_builtin is True
     assert old_source.enabled is False
     assert old_source.test_status == "UNTESTED"
 

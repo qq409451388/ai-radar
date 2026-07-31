@@ -163,13 +163,23 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
     existing_source_keys = {
         (row.source_type, row.url) for row in existing_sources
     }
+    existing_source_by_key = {
+        (row.source_type, row.url): row for row in existing_sources
+    }
 
     def _resolve_topic_id(name: str) -> int | None:
         return topic_name_to_id.get(name)
 
+    def _mark_existing_builtin(key: tuple[str, str]) -> bool:
+        source = existing_source_by_key.get(key)
+        if source is None:
+            return False
+        source.is_builtin = True
+        return True
+
     for rss in data.get("rss_sources", []):
         key = (SOURCE_TYPE_RSS, rss["url"])
-        if key in existing_source_keys:
+        if _mark_existing_builtin(key):
             continue
         topic_id = _resolve_topic_id(rss.get("default_topic", ""))
         sc = SourceConfig(
@@ -183,32 +193,35 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
                 "PASSED" if bool(rss.get("enabled", False)) else "UNTESTED"
             ),
             default_topic_id=topic_id,
+            is_builtin=True,
         )
         session.add(sc)
         existing_source_keys.add(key)
+        existing_source_by_key[key] = sc
         created["sources"] += 1
 
     # ----- Official web article indexes / watched pages -----
     for page in data.get("web_page_sources", []):
         key = (SOURCE_TYPE_WEB_PAGE, page["url"])
-        if key in existing_source_keys:
+        if _mark_existing_builtin(key):
             continue
         topic_id = _resolve_topic_id(page.get("default_topic", ""))
-        session.add(
-            SourceConfig(
-                name=page["name"],
-                source_type=SOURCE_TYPE_WEB_PAGE,
-                url=page["url"],
-                repository="",
-                path_filter=page.get("path_filter", ""),
-                enabled=bool(page.get("enabled", False)),
-                test_status=(
-                    "PASSED" if bool(page.get("enabled", False)) else "UNTESTED"
-                ),
-                default_topic_id=topic_id,
-            )
+        source = SourceConfig(
+            name=page["name"],
+            source_type=SOURCE_TYPE_WEB_PAGE,
+            url=page["url"],
+            repository="",
+            path_filter=page.get("path_filter", ""),
+            enabled=bool(page.get("enabled", False)),
+            test_status=(
+                "PASSED" if bool(page.get("enabled", False)) else "UNTESTED"
+            ),
+            default_topic_id=topic_id,
+            is_builtin=True,
         )
+        session.add(source)
         existing_source_keys.add(key)
+        existing_source_by_key[key] = source
         created["sources"] += 1
 
     # ----- Developer community discussions -----
@@ -224,13 +237,16 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
             None,
         )
         if existing is not None:
+            existing.is_builtin = True
             # Migrate old RSS/web configurations such as juejin.cn/ai to the
             # dedicated adapter. A new test is required because the connection
             # method changed.
             if existing.source_type != SOURCE_TYPE_COMMUNITY:
+                old_key = (existing.source_type, existing.url)
                 existing_source_keys.discard(
-                    (existing.source_type, existing.url)
+                    old_key
                 )
+                existing_source_by_key.pop(old_key, None)
                 existing.source_type = SOURCE_TYPE_COMMUNITY
                 existing.enabled = False
                 existing.test_status = "UNTESTED"
@@ -239,9 +255,12 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
                 existing_source_keys.add(
                     (existing.source_type, existing.url)
                 )
+                existing_source_by_key[
+                    (existing.source_type, existing.url)
+                ] = existing
             continue
         key = (SOURCE_TYPE_COMMUNITY, community["url"])
-        if key in existing_source_keys:
+        if _mark_existing_builtin(key):
             continue
         topic_id = _resolve_topic_id(community.get("default_topic", ""))
         source = SourceConfig(
@@ -253,16 +272,18 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
             enabled=False,
             test_status="UNTESTED",
             default_topic_id=topic_id,
+            is_builtin=True,
         )
         session.add(source)
         existing_sources.append(source)
         existing_source_keys.add(key)
+        existing_source_by_key[key] = source
         created["sources"] += 1
 
     # ----- GitHub release sources -----
     for gh in data.get("github_release_sources", []):
         key = (SOURCE_TYPE_GITHUB_RELEASE, gh["url"])
-        if key in existing_source_keys:
+        if _mark_existing_builtin(key):
             continue
         topic_id = _resolve_topic_id(gh.get("default_topic", ""))
         sc = SourceConfig(
@@ -276,32 +297,35 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
                 "PASSED" if bool(gh.get("enabled", False)) else "UNTESTED"
             ),
             default_topic_id=topic_id,
+            is_builtin=True,
         )
         session.add(sc)
         existing_source_keys.add(key)
+        existing_source_by_key[key] = sc
         created["sources"] += 1
 
     # ----- GitHub specification/document commit sources -----
     for gh in data.get("github_commit_sources", []):
         key = (SOURCE_TYPE_GITHUB_COMMIT, gh["url"])
-        if key in existing_source_keys:
+        if _mark_existing_builtin(key):
             continue
         topic_id = _resolve_topic_id(gh.get("default_topic", ""))
-        session.add(
-            SourceConfig(
-                name=gh["name"],
-                source_type=SOURCE_TYPE_GITHUB_COMMIT,
-                url=gh["url"],
-                repository=gh.get("repository", ""),
-                path_filter=gh.get("path_filter", ""),
-                enabled=bool(gh.get("enabled", False)),
-                test_status=(
-                    "PASSED" if bool(gh.get("enabled", False)) else "UNTESTED"
-                ),
-                default_topic_id=topic_id,
-            )
+        source = SourceConfig(
+            name=gh["name"],
+            source_type=SOURCE_TYPE_GITHUB_COMMIT,
+            url=gh["url"],
+            repository=gh.get("repository", ""),
+            path_filter=gh.get("path_filter", ""),
+            enabled=bool(gh.get("enabled", False)),
+            test_status=(
+                "PASSED" if bool(gh.get("enabled", False)) else "UNTESTED"
+            ),
+            default_topic_id=topic_id,
+            is_builtin=True,
         )
+        session.add(source)
         existing_source_keys.add(key)
+        existing_source_by_key[key] = source
         created["sources"] += 1
 
     session.flush()

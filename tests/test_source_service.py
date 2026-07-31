@@ -1,6 +1,7 @@
 """Tests for editing and deleting configured information sources."""
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import func, select
 from streamlit.testing.v1 import AppTest
 
@@ -139,6 +140,28 @@ def test_deleting_source_cleans_items_but_keeps_knowledge(session):
     assert session.scalar(select(func.count(ChangePoint.id))) == 1
 
 
+def test_builtin_source_cannot_be_edited_or_deleted(session):
+    source = _source(session)
+    source.is_builtin = True
+    original_name = source.name
+
+    with pytest.raises(ValueError, match="系统内置"):
+        SourceService(session).update(
+            source.id,
+            name="Changed",
+            source_type="RSS",
+            url="https://example.com/changed",
+            repository="",
+            path_filter="",
+            default_topic_id=None,
+        )
+    with pytest.raises(ValueError, match="系统内置"):
+        SourceService(session).delete(source.id)
+
+    assert source.name == original_name
+    assert session.get(SourceConfig, source.id) is source
+
+
 def test_sources_page_visibly_marks_default_communities(
     tmp_path,
     monkeypatch,
@@ -164,12 +187,21 @@ def test_sources_page_visibly_marks_default_communities(
         assert not app.exception
         labels = [item.label for item in app.expander]
         assert any(
-            "LINUX DO" in label and "社区讨论" in label
+            "LINUX DO" in label
+            and "社区讨论" in label
+            and "系统内置" in label
             for label in labels
         )
         assert any(
-            "稀土掘金" in label and "社区讨论" in label
+            "稀土掘金" in label
+            and "社区讨论" in label
+            and "系统内置" in label
             for label in labels
+        )
+        button_keys = {button.key for button in app.button}
+        assert not any(
+            key and key.startswith(("edit_source_", "delete_source_"))
+            for key in button_keys
         )
     finally:
         reset_config()
