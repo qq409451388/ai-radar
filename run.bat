@@ -43,6 +43,6 @@ if errorlevel 1 (
 
 echo ^>^>^> Starting AI Radar
 echo Open http://localhost:8501 if the browser does not open automatically.
-".venv\Scripts\python.exe" -m streamlit run app.py --server.headless true
+".venv\Scripts\python.exe" -m ai_radar.launcher
 
 endlocal

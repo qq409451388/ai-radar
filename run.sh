@@ -31,4 +31,4 @@ python -m pip install -q -r requirements.txt
 
 echo ">>> Starting AI Radar"
 echo ">>> Open http://localhost:8501 if the browser does not open automatically."
-exec python -m streamlit run app.py --server.headless true
+exec python -m ai_radar.launcher

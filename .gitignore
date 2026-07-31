@@ -17,6 +17,7 @@ data/*.db
 data/*.db-*
 data/*.backup*
 *.log
+.ai-radar.pid
 
 # Editor / operating system
 .DS_Store
