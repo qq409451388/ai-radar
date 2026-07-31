@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -21,7 +22,10 @@ class CollectionService:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def collect_all(self) -> dict:
+    def collect_all(
+        self,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> dict:
         configs = list(
             self.session.execute(
                 select(SourceConfig).where(SourceConfig.enabled == True)  # noqa: E712
@@ -30,8 +34,16 @@ class CollectionService:
         total_new = 0
         total_seen = 0
         failed_sources = 0
+        if progress_callback:
+            progress_callback(0, len(configs), "准备采集已启用的资讯源")
         with job_log(self.session, "collect_sources") as jl:
-            for cfg in configs:
+            for index, cfg in enumerate(configs, start=1):
+                if progress_callback:
+                    progress_callback(
+                        index - 1,
+                        len(configs),
+                        f"正在采集 {cfg.name}",
+                    )
                 try:
                     new, seen = self._collect_one(cfg)
                     total_new += new
@@ -43,10 +55,21 @@ class CollectionService:
                     log.warning("collect source %s failed: %s", cfg.name, exc)
                 cfg.last_collected_at = datetime.now(timezone.utc)
                 jl.processed_count += 1
+                if progress_callback:
+                    progress_callback(
+                        index,
+                        len(configs),
+                        f"已完成 {index}/{len(configs)} 个资讯源",
+                    )
             jl.success_count = total_new
             jl.failed_count = failed_sources
             jl.message = f"collected {total_new} new / {total_seen} seen from {len(configs)} sources"
-        return {"new": total_new, "seen": total_seen, "sources": len(configs)}
+        return {
+            "new": total_new,
+            "seen": total_seen,
+            "sources": len(configs),
+            "failed_sources": failed_sources,
+        }
 
     def collect_one(self, source_config_id: int) -> dict:
         cfg = self.session.get(SourceConfig, source_config_id)

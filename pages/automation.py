@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from html import escape
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import Integer, func, select
 
-from ai_radar import orchestrator
 from ai_radar.config import get_config
 from ai_radar.database import session_scope
 from ai_radar.models import (
@@ -19,21 +19,15 @@ from ai_radar.models import (
     SourceItem,
     Topic,
 )
+from ai_radar.pipeline_runner import (
+    ACTIVE_STATUSES,
+    PIPELINES,
+    enqueue_pipeline,
+    get_active_pipeline_snapshot,
+    get_pipeline_snapshot,
+)
 from ai_radar.scheduler import get_scheduler
 from ai_radar.ui import fmt_dt
-
-
-def _run_action(label: str, fn, *, primary: bool = False) -> None:
-    if st.button(
-        label,
-        type="primary" if primary else "secondary",
-        width="stretch",
-        key=f"action_{label}",
-    ):
-        with st.spinner(f"正在执行：{label}…"):
-            result = fn()
-        st.success(f"完成：{result}")
-        st.rerun()
 
 
 def render() -> None:
@@ -59,18 +53,54 @@ def render() -> None:
 
 
 def _render_pipeline() -> None:
-    st.markdown("### 手动运行")
-    cols = st.columns(5)
-    with cols[0]:
-        _run_action("采集资讯", orchestrator.collect_all_sources, primary=True)
-    with cols[1]:
-        _run_action("分析下一批", orchestrator.analyze_pending_items)
-    with cols[2]:
-        _run_action("同步记忆", orchestrator.sync_profile)
-    with cols[3]:
-        _run_action("评估新知识点", orchestrator.assess_new_change_points)
-    with cols[4]:
-        _run_action("保存今日快照", orchestrator.save_snapshot)
+    st.markdown("### 启动一次更新")
+    st.caption(
+        "任务在后台执行。离开本页面不会中断；关闭 AI Radar 的终端或应用进程会中断。"
+    )
+
+    labels = [definition.label for definition in PIPELINES.values()]
+    selected_label = st.segmented_control(
+        "更新范围",
+        labels,
+        default=labels[0],
+        key="pipeline_type_selector",
+    ) or labels[0]
+    selected = next(
+        definition
+        for definition in PIPELINES.values()
+        if definition.label == selected_label
+    )
+    st.markdown(
+        f'<div class="pipeline-choice-note">{escape(selected.description)}</div>',
+        unsafe_allow_html=True,
+    )
+
+    active = get_active_pipeline_snapshot()
+    action_col, hint_col = st.columns([1.25, 3.75])
+    with action_col:
+        if st.button(
+            f"启动{selected.label}",
+            type="primary",
+            width="stretch",
+            disabled=active is not None,
+        ):
+            run_id, created = enqueue_pipeline(selected.key)
+            if created:
+                st.toast(f"{selected.label}已在后台启动", icon="🚀")
+            else:
+                st.toast(f"任务 #{run_id} 已在运行", icon="⏳")
+            st.rerun()
+    with hint_col:
+        if active:
+            st.info(
+                f"{active['pipeline_label']} #{active['id']} 正在运行。"
+                "为避免重复调用模型，完成前不会再启动第二条手动流水线。"
+            )
+        else:
+            step_names = " → ".join(step.label for step in selected.steps)
+            st.caption(f"将按顺序执行：{step_names}")
+
+    _render_pipeline_progress()
 
     with session_scope() as session:
         counts = dict(
@@ -139,6 +169,145 @@ def _render_pipeline() -> None:
             for job in jobs
         ]
         st.dataframe(pd.DataFrame(data), width="stretch", hide_index=True)
+
+
+@st.fragment(run_every=2.0)
+def _render_pipeline_progress() -> None:
+    snapshot = get_pipeline_snapshot()
+    if snapshot is None:
+        st.markdown(
+            '<div class="pipeline-empty">尚未运行手动流水线。选择更新范围后即可开始。</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    status = snapshot["status"]
+    active = status in ACTIVE_STATUSES
+    status_labels = {
+        "QUEUED": "排队中",
+        "RUNNING": "运行中",
+        "SUCCESS": "已完成",
+        "PARTIAL": "部分完成",
+        "FAILED": "运行失败",
+        "INTERRUPTED": "已中断",
+    }
+    status_class = {
+        "SUCCESS": "success",
+        "PARTIAL": "partial",
+        "FAILED": "failed",
+        "INTERRUPTED": "failed",
+        "RUNNING": "running",
+        "QUEUED": "running",
+    }.get(status, "")
+    current_step = next(
+        (
+            step
+            for step in snapshot["steps"]
+            if step["key"] == snapshot["current_step"]
+        ),
+        None,
+    )
+    elapsed_end = datetime.now(timezone.utc) if active else snapshot["finished_at"]
+    elapsed = _duration(snapshot["started_at"], elapsed_end)
+    st.markdown(
+        f"""
+        <div class="pipeline-run-head">
+          <div>
+            <span class="pipeline-run-title">{escape(snapshot['pipeline_label'])} #{snapshot['id']}</span>
+            <span class="pipeline-status {status_class}">{escape(status_labels.get(status, status))}</span>
+          </div>
+          <div class="pipeline-run-meta">开始 {escape(fmt_dt(snapshot['started_at']))} · 已用时 {escape(elapsed)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.progress(
+        min(1.0, max(0.0, snapshot["progress"])),
+        text=(
+            f"{int(snapshot['progress'] * 100)}% · "
+            f"{current_step['label'] if current_step else status_labels.get(status, status)}"
+        ),
+    )
+    _render_stepper(snapshot["steps"])
+
+    live = snapshot.get("live", {})
+    message = live.get("message") or (
+        current_step["message"] if current_step else ""
+    )
+    if active:
+        current = live.get("current", 0)
+        total = live.get("total", 0)
+        detail = f" · {current}/{total}" if total else ""
+        st.caption(
+            f"⏳ {message or '后台任务正在执行'}{detail}。"
+            "页面每 2 秒刷新；模型单次请求较慢时，数字可能短暂停留。"
+        )
+    elif status == "SUCCESS":
+        st.success("流水线已完成，相关页面的数据已更新。")
+    elif status == "PARTIAL":
+        st.warning("流水线已完成，但部分项目处理失败。展开下方步骤可查看详情。")
+    elif status in ("FAILED", "INTERRUPTED"):
+        st.error(snapshot["error"] or message or "流水线未完成。")
+
+    with st.expander(
+        "步骤详情",
+        expanded=status in ("FAILED", "PARTIAL", "INTERRUPTED"),
+    ):
+        for step in snapshot["steps"]:
+            icon = {
+                "SUCCESS": "✅",
+                "PARTIAL": "⚠️",
+                "RUNNING": "🔄",
+                "FAILED": "❌",
+                "INTERRUPTED": "⏹️",
+                "SKIPPED": "⏭️",
+                "PENDING": "○",
+            }.get(step["status"], "○")
+            cols = st.columns([0.35, 1.4, 1, 3])
+            cols[0].write(icon)
+            cols[1].markdown(f"**{step['label']}**")
+            cols[2].caption(
+                _duration(step["started_at"], step["finished_at"])
+            )
+            cols[3].caption(step["message"] or "等待前一步完成")
+
+
+def _render_stepper(steps: list[dict]) -> None:
+    icon_by_status = {
+        "SUCCESS": "✓",
+        "PARTIAL": "!",
+        "RUNNING": "↻",
+        "FAILED": "×",
+        "INTERRUPTED": "■",
+        "SKIPPED": "–",
+    }
+    parts: list[str] = ['<div class="pipeline-stepper">']
+    for index, step in enumerate(steps, start=1):
+        if index > 1:
+            previous = steps[index - 2]["status"]
+            connector_class = (
+                "done" if previous in ("SUCCESS", "PARTIAL") else ""
+            )
+            parts.append(
+                f'<div class="pipeline-connector {connector_class}"></div>'
+            )
+        status = step["status"].lower()
+        icon = (
+            str(index)
+            if step["status"] == "PENDING"
+            else icon_by_status.get(step["status"], str(index))
+        )
+        parts.append(
+            f"""
+            <div class="pipeline-step {escape(status)}">
+              <div class="pipeline-step-dot">{escape(icon)}</div>
+              <div class="pipeline-step-label">{escape(step['label'])}</div>
+            </div>
+            """
+        )
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
 def _render_sources() -> None:

@@ -10,6 +10,10 @@ from ai_radar.bootstrap import seed_default_data
 from ai_radar.config import get_config
 from ai_radar.database import init_db, session_scope
 from ai_radar.models import ProfileSourceFile, SourceItem
+from ai_radar.pipeline_runner import (
+    get_active_pipeline_snapshot,
+    recover_interrupted_runs,
+)
 from ai_radar.scheduler import start_scheduler
 from ai_radar.theme import inject_app_styles
 
@@ -30,6 +34,7 @@ def ensure_initialized() -> None:
     if st.session_state.get("_initialized"):
         return
     init_db()
+    recover_interrupted_runs()
     with session_scope() as session:
         seed_default_data(session)
     st.session_state["_initialized"] = True
@@ -86,9 +91,39 @@ def render_sidebar_status() -> None:
             """,
             unsafe_allow_html=True,
         )
+        render_sidebar_pipeline_status()
         if st.session_state.get("_scheduler_error"):
             st.caption(f"调度器异常：{st.session_state['_scheduler_error']}")
         st.caption(f"近 {cfg.score_window_days} 天作为当前跟进窗口")
+
+
+@st.fragment(run_every=2.0)
+def render_sidebar_pipeline_status() -> None:
+    snapshot = get_active_pipeline_snapshot()
+    if snapshot is None:
+        return
+    current = next(
+        (
+            step
+            for step in snapshot["steps"]
+            if step["key"] == snapshot["current_step"]
+        ),
+        None,
+    )
+    current_label = current["label"] if current else "等待启动"
+    percent = int(snapshot["progress"] * 100)
+    st.markdown(
+        f"""
+        <div class="pipeline-sidebar">
+          <div class="pipeline-sidebar-title">
+            <span>↻ {snapshot['pipeline_label']}</span><span>{percent}%</span>
+          </div>
+          <div class="pipeline-sidebar-detail">{current_label} · 后台运行中</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.progress(snapshot["progress"])
 
 
 ensure_initialized()

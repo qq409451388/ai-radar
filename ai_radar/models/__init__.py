@@ -282,6 +282,67 @@ class JobLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class PipelineRun(Base):
+    """A user-triggered, multi-step pipeline that survives page navigation."""
+
+    __tablename__ = "pipeline_run"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pipeline_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default="QUEUED", server_default="QUEUED", index=True
+    )
+    current_step: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    progress: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    result_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    steps: Mapped[list["PipelineStep"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="PipelineStep.position",
+    )
+
+
+class PipelineStep(Base):
+    """Persistent state for one connected step in a pipeline run."""
+
+    __tablename__ = "pipeline_step"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("pipeline_run.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    step_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default="PENDING", server_default="PENDING", index=True
+    )
+    progress: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    processed_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    success_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    failed_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    message: Mapped[str] = mapped_column(Text, default="", server_default="")
+    result_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    run: Mapped[PipelineRun] = relationship(back_populates="steps")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "step_key", name="uq_pipeline_run_step"),
+    )
+
+
 class LlmResponseCache(Base):
     """Persistent structured-response cache keyed by exact prompt/model."""
 

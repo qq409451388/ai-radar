@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 
@@ -51,6 +52,7 @@ class CoverageService:
         force: bool = False,
         topic_ids: set[int] | None = None,
         trigger_type: str = "SCHEDULED",
+        progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> dict:
         stmt = select(ChangePoint).where(ChangePoint.status == STATUS_ACTIVE)
         if topic_ids is not None:
@@ -59,10 +61,25 @@ class CoverageService:
             stmt = stmt.where(ChangePoint.topic_id.in_(topic_ids))
         cps = list(self.session.execute(stmt).scalars())
         assessed = 0
+        failed = 0
+        if progress_callback:
+            progress_callback(0, len(cps), "已读取待评估知识点")
         with job_log(self.session, "assess_all_change_points") as jl:
-            for cp in cps:
+            for index, cp in enumerate(cps, start=1):
+                if progress_callback:
+                    progress_callback(
+                        index - 1,
+                        len(cps),
+                        f"正在评估第 {index}/{len(cps)} 个知识点：{cp.title[:42]}",
+                    )
                 jl.processed_count += 1
                 if not force and self._has_recent_coverage(cp.id):
+                    if progress_callback:
+                        progress_callback(
+                            index,
+                            len(cps),
+                            f"已检查 {index}/{len(cps)} 个知识点",
+                        )
                     continue
                 try:
                     self._assess_one(cp, trigger_type=trigger_type)
@@ -70,28 +87,54 @@ class CoverageService:
                     jl.success_count += 1
                 except LlmError as exc:
                     jl.failed_count += 1
+                    failed += 1
                     log.warning("assess cp %s failed: %s", cp.id, exc)
                 except Exception:
                     jl.failed_count += 1
+                    failed += 1
                     log.exception("assess cp %s errored", cp.id)
+                if progress_callback:
+                    progress_callback(
+                        index,
+                        len(cps),
+                        f"已评估 {index}/{len(cps)} 个知识点",
+                    )
             jl.message = f"assessed {assessed} of {len(cps)} change points"
-        return {"total": len(cps), "assessed": assessed}
+        return {"total": len(cps), "assessed": assessed, "failed": failed}
 
     def assess_topics(
-        self, topic_ids: set[int], trigger_type: str = "PROFILE_CHANGED"
+        self,
+        topic_ids: set[int],
+        trigger_type: str = "PROFILE_CHANGED",
+        progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> dict:
         return self.assess_all(
-            force=True, topic_ids=topic_ids, trigger_type=trigger_type
+            force=True,
+            topic_ids=topic_ids,
+            trigger_type=trigger_type,
+            progress_callback=progress_callback,
         )
 
-    def assess_new(self) -> dict:
+    def assess_new(
+        self,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> dict:
         """Assess only change points that have no coverage row yet."""
         stmt = select(ChangePoint).where(ChangePoint.status == STATUS_ACTIVE)
         cps = list(self.session.execute(stmt).scalars())
         new_cps = [cp for cp in cps if not self._has_any_coverage(cp.id)]
         assessed = 0
+        failed = 0
+        if progress_callback:
+            progress_callback(0, len(new_cps), "已读取尚未评估的知识点")
         with job_log(self.session, "assess_new_change_points") as jl:
-            for cp in new_cps:
+            for index, cp in enumerate(new_cps, start=1):
+                if progress_callback:
+                    progress_callback(
+                        index - 1,
+                        len(new_cps),
+                        f"正在评估第 {index}/{len(new_cps)} 个知识点：{cp.title[:42]}",
+                    )
                 jl.processed_count += 1
                 try:
                     self._assess_one(cp, trigger_type="NEW_CHANGE_POINT")
@@ -99,12 +142,24 @@ class CoverageService:
                     jl.success_count += 1
                 except LlmError as exc:
                     jl.failed_count += 1
+                    failed += 1
                     log.warning("assess new cp %s failed: %s", cp.id, exc)
                 except Exception:
                     jl.failed_count += 1
+                    failed += 1
                     log.exception("assess new cp %s errored", cp.id)
+                if progress_callback:
+                    progress_callback(
+                        index,
+                        len(new_cps),
+                        f"已评估 {index}/{len(new_cps)} 个知识点",
+                    )
             jl.message = f"assessed {assessed} new change points of {len(new_cps)} candidates"
-        return {"candidates": len(new_cps), "assessed": assessed}
+        return {
+            "candidates": len(new_cps),
+            "assessed": assessed,
+            "failed": failed,
+        }
 
     def assess_one(self, change_point_id: int) -> KnowledgeCoverage:
         cp = self.session.get(ChangePoint, change_point_id)

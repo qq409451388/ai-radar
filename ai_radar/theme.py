@@ -71,6 +71,74 @@ def inject_app_styles() -> None:
         .card-value.bad { color:var(--radar-bad); }
         .section-heading { font-size:1.05rem; font-weight:720; margin:1.8rem 0 .2rem; }
         .section-caption { color:var(--radar-muted); font-size:.78rem; margin-bottom:.8rem; }
+        .pipeline-choice-note {
+          color:var(--radar-muted); font-size:.8rem; margin:-.2rem 0 .9rem;
+        }
+        .pipeline-empty {
+          border:1px dashed #cfd4df; border-radius:.95rem; padding:1.2rem;
+          color:var(--radar-muted); background:rgba(255,255,255,.55); margin:.8rem 0 1.25rem;
+        }
+        .pipeline-run-head {
+          display:flex; align-items:flex-start; justify-content:space-between; gap:1rem;
+          margin:1.1rem 0 .65rem;
+        }
+        .pipeline-run-title { font-weight:750; color:var(--radar-ink); margin-right:.55rem; }
+        .pipeline-run-meta { color:var(--radar-muted); font-size:.72rem; padding-top:.18rem; }
+        .pipeline-status {
+          display:inline-block; border-radius:99px; padding:.16rem .5rem;
+          font-size:.68rem; font-weight:700; color:var(--radar-muted); background:#eef0f4;
+        }
+        .pipeline-status.running { color:#4b4bb8; background:var(--radar-accent-soft); }
+        .pipeline-status.success { color:var(--radar-good); background:#e5f6ef; }
+        .pipeline-status.partial { color:#9c640d; background:#fff3dc; }
+        .pipeline-status.failed { color:var(--radar-bad); background:#fdeaea; }
+        .pipeline-stepper {
+          display:flex; align-items:flex-start; width:100%; padding:.8rem .15rem 1rem;
+          overflow-x:auto;
+        }
+        .pipeline-step {
+          flex:0 0 7rem; display:flex; flex-direction:column; align-items:center;
+          text-align:center; color:#98a2b3;
+        }
+        .pipeline-step-dot {
+          display:grid; place-items:center; width:2rem; height:2rem; border-radius:99px;
+          border:2px solid #d7dbe4; background:white; font-size:.78rem; font-weight:800;
+          position:relative; z-index:2;
+        }
+        .pipeline-step-label { margin-top:.42rem; font-size:.72rem; font-weight:650; }
+        .pipeline-connector {
+          flex:1 0 1.5rem; height:2px; margin:.98rem -.55rem 0;
+          background:#dfe2e8; min-width:1.5rem;
+        }
+        .pipeline-connector.done { background:var(--radar-good); }
+        .pipeline-step.success, .pipeline-step.partial { color:var(--radar-good); }
+        .pipeline-step.success .pipeline-step-dot {
+          color:white; background:var(--radar-good); border-color:var(--radar-good);
+        }
+        .pipeline-step.partial { color:var(--radar-warn); }
+        .pipeline-step.partial .pipeline-step-dot {
+          color:white; background:var(--radar-warn); border-color:var(--radar-warn);
+        }
+        .pipeline-step.running { color:var(--radar-accent); }
+        .pipeline-step.running .pipeline-step-dot {
+          color:var(--radar-accent); border-color:var(--radar-accent);
+          background:var(--radar-accent-soft); box-shadow:0 0 0 5px rgba(91,91,214,.09);
+        }
+        .pipeline-step.failed, .pipeline-step.interrupted { color:var(--radar-bad); }
+        .pipeline-step.failed .pipeline-step-dot,
+        .pipeline-step.interrupted .pipeline-step-dot {
+          color:white; background:var(--radar-bad); border-color:var(--radar-bad);
+        }
+        .pipeline-step.skipped { color:#b0b5bf; }
+        .pipeline-sidebar {
+          padding:.72rem .82rem; border:1px solid #dfe2ff; border-radius:.8rem;
+          background:var(--radar-accent-soft); margin:.65rem 0;
+        }
+        .pipeline-sidebar-title {
+          display:flex; justify-content:space-between; gap:.5rem; font-size:.76rem;
+          color:var(--radar-ink); font-weight:700; margin-bottom:.3rem;
+        }
+        .pipeline-sidebar-detail { color:var(--radar-muted); font-size:.68rem; }
         .priority-card {
           background:white; border:1px solid var(--radar-line); border-radius:.9rem;
           padding:1rem 1.05rem; margin:.55rem 0;
@@ -108,6 +176,9 @@ def inject_app_styles() -> None:
         @media (max-width: 800px) {
           [data-testid="stMainBlockContainer"] { padding:1.2rem .9rem 3rem; }
           h1 { font-size:1.7rem !important; }
+          .pipeline-run-head { display:block; }
+          .pipeline-run-meta { margin-top:.3rem; }
+          .pipeline-step { flex-basis:5.7rem; }
         }
         </style>
         """,

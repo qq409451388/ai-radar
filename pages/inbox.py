@@ -16,6 +16,7 @@ from ai_radar.models import (
     SourceItem,
     Topic,
 )
+from ai_radar.pipeline_runner import enqueue_pipeline, get_active_pipeline_snapshot
 from ai_radar.ui import fmt_dt, latest_coverage, sources_for_change_point
 
 STATUS_LABEL = {
@@ -58,30 +59,30 @@ def render() -> None:
     cols[2].metric("自动过滤", counts.get("IGNORED", 0))
     cols[3].metric("启用来源", source_count)
 
-    action_cols = st.columns([1.1, 1.1, 1.2, 2.4])
-    if action_cols[0].button("采集最新资讯", type="primary", width="stretch"):
-        with st.spinner("正在检查所有启用来源…"):
-            result = orchestrator.collect_all_sources()
-        st.success(f"新增 {result['new']} 条，检查 {result['seen']} 条。")
-        st.rerun()
-    if action_cols[1].button(
-        f"分析下一批（{cfg.analyze_batch_size}）", width="stretch"
+    active_pipeline = get_active_pipeline_snapshot()
+    action_cols = st.columns([1.5, 1.2, 3.1])
+    if action_cols[0].button(
+        f"后台更新情报（每批 {cfg.analyze_batch_size}）",
+        type="primary",
+        width="stretch",
+        disabled=active_pipeline is not None,
     ):
-        with st.spinner("正在提炼知识变化点…"):
-            result = orchestrator.analyze_pending_items()
-        st.success(
-            f"处理 {result['processed']} 条：形成 {result['success']}，"
-            f"过滤 {result['ignored']}，失败 {result['failed']}。"
-        )
+        enqueue_pipeline("INTELLIGENCE")
+        st.toast("情报更新已在后台启动", icon="🚀")
         st.rerun()
-    if action_cols[2].button("归档 180 天前积压", width="stretch"):
+    if action_cols[1].button("归档 180 天前积压", width="stretch"):
         result = orchestrator.archive_stale_pending(180)
         st.success(f"已归档 {result['archived']} 条历史积压，可在“已处理”中查看。")
         st.rerun()
-    action_cols[3].caption(
-        f"最老待处理资讯：{fmt_dt(oldest_pending)}。"
-        "归档只改变处理状态，不删除原始数据。"
-    )
+    if active_pipeline:
+        action_cols[2].caption(
+            f"{active_pipeline['pipeline_label']}正在后台运行；切换页面不会中断。"
+        )
+    else:
+        action_cols[2].caption(
+            f"最老待处理资讯：{fmt_dt(oldest_pending)}。"
+            "归档只改变处理状态，不删除原始数据。"
+        )
 
     tab_changes, tab_queue, tab_done = st.tabs(
         ["知识变化", f"待处理队列 · {counts.get('PENDING', 0)}", "已处理与失败"]

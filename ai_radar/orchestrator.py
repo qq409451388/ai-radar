@@ -9,6 +9,7 @@ locks for minutes (which caused "database is locked" under concurrency).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from ai_radar.database import session_scope
 from ai_radar.llm.client import LlmClient
@@ -24,9 +25,16 @@ from ai_radar.services.scoring_service import ScoringService
 log = logging.getLogger(__name__)
 
 
-def collect_all_sources() -> dict:
+ProgressCallback = Callable[[int, int, str], None]
+
+
+def collect_all_sources(
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
     with session_scope() as session:
-        return CollectionService(session).collect_all()
+        return CollectionService(session).collect_all(
+            progress_callback=progress_callback
+        )
 
 
 def collect_one_source(source_config_id: int) -> dict:
@@ -34,7 +42,10 @@ def collect_one_source(source_config_id: int) -> dict:
         return CollectionService(session).collect_one(source_config_id)
 
 
-def analyze_pending_items(limit: int | None = None) -> dict:
+def analyze_pending_items(
+    limit: int | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
     """Analyze PENDING items.
 
     Runs inside a single session; the busy_timeout pragma on the SQLite
@@ -42,25 +53,45 @@ def analyze_pending_items(limit: int | None = None) -> dict:
     failing immediately with "database is locked".
     """
     with session_scope() as session:
-        return AnalysisService(session, LlmClient(session)).analyze_pending(limit=limit)
+        return AnalysisService(session, LlmClient(session)).analyze_pending(
+            limit=limit,
+            progress_callback=progress_callback,
+        )
 
 
-def sync_profile() -> dict:
+def sync_profile(progress_callback: ProgressCallback | None = None) -> dict:
     """Sync GitHub memory in short transactions; LLM calls happen outside
     any held write lock.
     """
+    if progress_callback:
+        progress_callback(0, 100, "正在读取 GitHub 记忆仓库")
+
     # Step 1: sync file list (short write tx).
     with session_scope() as session:
         svc = ProfileSyncService(session)
         result = svc.sync()
         changed = result.pop("changed_files", [])
+    if progress_callback:
+        progress_callback(
+            20,
+            100,
+            f"仓库同步完成，{len(changed)} 个文件需要重新抽取",
+        )
 
     # Step 2: re-extract facts for each changed file (one short tx per file).
     affected_topic_ids: set[int] = set()
     extracted = 0
     extraction_failed = 0
+    assessment_failed = 0
     if changed:
-        for row, remote in changed:
+        for index, (row, remote) in enumerate(changed, start=1):
+            if progress_callback:
+                file_progress = 20 + int(55 * (index - 1) / len(changed))
+                progress_callback(
+                    file_progress,
+                    100,
+                    f"正在抽取第 {index}/{len(changed)} 个记忆文件：{row.file_path}",
+                )
             try:
                 with session_scope() as session:
                     extracted_result = FactService(
@@ -80,19 +111,43 @@ def sync_profile() -> dict:
                     if failed_row is not None:
                         failed_row.extraction_status = "FAILED"
                         failed_row.extraction_error = f"{type(exc).__name__}: {exc}"
+            if progress_callback:
+                file_progress = 20 + int(55 * index / len(changed))
+                progress_callback(
+                    file_progress,
+                    100,
+                    f"已抽取 {index}/{len(changed)} 个记忆文件",
+                )
 
         # Step 3: only re-assess topics touched by changed facts.
         if affected_topic_ids:
             try:
+                def assessment_progress(current: int, total: int, message: str) -> None:
+                    if not progress_callback:
+                        return
+                    ratio = current / total if total else 1.0
+                    progress_callback(
+                        75 + int(25 * ratio),
+                        100,
+                        message,
+                    )
+
                 with session_scope() as session:
                     CoverageService(
                         session, LlmClient(session)
-                    ).assess_topics(affected_topic_ids)
+                    ).assess_topics(
+                        affected_topic_ids,
+                        progress_callback=assessment_progress,
+                    )
             except Exception as exc:
                 log.warning("re-assess after profile sync failed: %s", exc)
+                assessment_failed = 1
     result["extracted"] = extracted
     result["extraction_failed"] = extraction_failed
+    result["assessment_failed"] = assessment_failed
     result["affected_topics"] = len(affected_topic_ids)
+    if progress_callback:
+        progress_callback(100, 100, "记忆同步与关联评估完成")
     return result
 
 
@@ -101,9 +156,13 @@ def extract_facts(force: bool = False) -> dict:
         return FactService(session, LlmClient(session)).extract_all(force=force)
 
 
-def assess_new_change_points() -> dict:
+def assess_new_change_points(
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
     with session_scope() as session:
-        return CoverageService(session, LlmClient(session)).assess_new()
+        return CoverageService(session, LlmClient(session)).assess_new(
+            progress_callback=progress_callback
+        )
 
 
 def assess_all_change_points() -> dict:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, or_, select
@@ -32,7 +33,11 @@ class AnalysisService:
         self.llm = llm or LlmClient(session)
         self.dedup = DedupService(session)
 
-    def analyze_pending(self, limit: int | None = None) -> dict:
+    def analyze_pending(
+        self,
+        limit: int | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> dict:
         now = datetime.now(timezone.utc)
         batch_size = limit or get_config().analyze_batch_size
         stmt = (
@@ -57,13 +62,21 @@ class AnalysisService:
             .limit(batch_size)
         )
         items = list(self.session.execute(stmt).scalars())
+        if progress_callback:
+            progress_callback(0, len(items), "已读取待分析队列")
 
         success = 0
         ignored = 0
         failed = 0
         new_cp = 0
         with job_log(self.session, "analyze_items") as jl:
-            for item in items:
+            for index, item in enumerate(items, start=1):
+                if progress_callback:
+                    progress_callback(
+                        index - 1,
+                        len(items),
+                        f"正在分析第 {index}/{len(items)} 条：{item.title[:48]}",
+                    )
                 jl.processed_count += 1
                 try:
                     result = self._analyze_one(item)
@@ -96,6 +109,12 @@ class AnalysisService:
                     log.exception("analyze item %s errored", item.id)
                 item.last_analyzed_at = datetime.now(timezone.utc)
                 item.updated_at = datetime.now(timezone.utc)
+                if progress_callback:
+                    progress_callback(
+                        index,
+                        len(items),
+                        f"已分析 {index}/{len(items)} 条",
+                    )
             jl.success_count = success
             jl.failed_count = failed
             jl.message = f"analyzed {len(items)} items: {success} ok, {ignored} ignored, {failed} failed, {new_cp} new cp"

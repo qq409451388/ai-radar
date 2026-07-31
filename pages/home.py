@@ -7,7 +7,6 @@ from html import escape
 import streamlit as st
 from sqlalchemy import func, select
 
-from ai_radar import orchestrator
 from ai_radar.config import get_config
 from ai_radar.database import session_scope
 from ai_radar.models import (
@@ -17,6 +16,10 @@ from ai_radar.models import (
     ProfileSourceFile,
     SourceItem,
     Topic,
+)
+from ai_radar.pipeline_runner import (
+    enqueue_pipeline,
+    get_active_pipeline_snapshot,
 )
 from ai_radar.services.scoring_service import ScoringService
 from ai_radar.ui import fmt_dt, latest_coverage
@@ -120,30 +123,38 @@ def render() -> None:
             )
         )
 
+    active_pipeline = get_active_pipeline_snapshot()
     action_col, secondary_col, note_col = st.columns([1.25, 1, 2.6])
     with action_col:
-        if st.button("运行今日更新", type="primary", width="stretch"):
-            with st.spinner("正在采集、分析、同步记忆并更新评分…"):
-                result = orchestrator.run_now_pipeline()
-            st.success(
-                f"完成：新增资讯 {result['collect']['new']} 条，"
-                f"本批分析 {result['analyze']['processed']} 条。"
-            )
+        if st.button(
+            "运行今日更新",
+            type="primary",
+            width="stretch",
+            disabled=active_pipeline is not None,
+        ):
+            enqueue_pipeline("FULL_UPDATE")
+            st.toast("完整更新已在后台启动", icon="🚀")
             st.rerun()
     with secondary_col:
-        if st.button("只同步 GPT 记忆", width="stretch"):
-            with st.spinner("正在同步并增量关联知识点…"):
-                result = orchestrator.sync_profile()
-            if result.get("error"):
-                st.error(result["error"])
-            else:
-                st.success(f"已同步，抽取 {result.get('extracted', 0)} 个文件。")
-                st.rerun()
+        if st.button(
+            "只同步 GPT 记忆",
+            width="stretch",
+            disabled=active_pipeline is not None,
+        ):
+            enqueue_pipeline("MEMORY")
+            st.toast("记忆同步已在后台启动", icon="🚀")
+            st.rerun()
     with note_col:
-        st.caption(
-            f"每次最多分析 {cfg.analyze_batch_size} 条，避免一次耗尽 Token。"
-            f"上次完整快照：{fmt_dt(last_pipeline.finished_at) if last_pipeline else '尚未生成'}"
-        )
+        if active_pipeline:
+            st.caption(
+                f"{active_pipeline['pipeline_label']}正在后台运行；"
+                "切换页面不影响，侧边栏会持续显示进度。"
+            )
+        else:
+            st.caption(
+                f"每次最多分析 {cfg.analyze_batch_size} 条，避免一次耗尽 Token。"
+                f"上次完整快照：{fmt_dt(last_pipeline.finished_at) if last_pipeline else '尚未生成'}"
+            )
 
     cols = st.columns(4)
     with cols[0]:
