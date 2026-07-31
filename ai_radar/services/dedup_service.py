@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ai_radar.bootstrap import STATUS_ACTIVE
 from ai_radar.models import ChangePoint, ChangePointSource, SourceItem
+from ai_radar.utils import to_utc
 
 log = logging.getLogger(__name__)
 
@@ -123,9 +124,15 @@ class DedupService:
             if len(overlap) >= KEYWORD_OVERLAP_MIN:
                 score += 0.3 * len(overlap)
             # Time proximity
-            cp_time = cp.occurred_at or cp.first_seen_at
-            ref_time = occurred_at or now
-            if abs((ref_time - cp_time).days) <= TIME_WINDOW_DAYS:
+            # SQLite returns naive datetimes even when UTC-aware values were
+            # originally inserted. Normalize both sides before subtraction.
+            cp_time = to_utc(cp.occurred_at or cp.first_seen_at)
+            ref_time = to_utc(occurred_at or now)
+            if (
+                cp_time is not None
+                and ref_time is not None
+                and abs((ref_time - cp_time).days) <= TIME_WINDOW_DAYS
+            ):
                 score += 0.1
             if score > best_score and score >= 0.72:
                 best = cp

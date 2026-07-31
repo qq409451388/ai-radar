@@ -175,3 +175,55 @@ def test_event_key_merge(session):
         ).scalars()
     )
     assert {l.source_item_id for l in links} == {item1.id, item2.id}
+
+
+def test_dedup_handles_sqlite_naive_and_aware_datetimes(session):
+    """SQLite reloads timestamps without tzinfo; dedup must normalize them."""
+    topic = __import__("ai_radar.models", fromlist=["Topic"]).Topic(name="时区测试")
+    session.add(topic)
+    source = _make_source(session, url="https://x/time-feed")
+    existing_item = SourceItem(
+        source_config_id=source.id,
+        external_id="time-1",
+        title="Timezone event",
+        raw_content="",
+        content_hash="time-h1",
+        analyze_status="SUCCESS",
+    )
+    session.add(existing_item)
+    session.flush()
+    existing = ChangePoint(
+        topic_id=topic.id,
+        event_key="time.old",
+        title="Timezone event",
+        summary="same event",
+        importance=3,
+        occurred_at=datetime(2026, 7, 1),  # naive, as SQLite returns it
+        status="ACTIVE",
+    )
+    session.add(existing)
+    session.flush()
+
+    incoming_item = SourceItem(
+        source_config_id=source.id,
+        external_id="time-2",
+        title="Timezone event",
+        raw_content="",
+        content_hash="time-h2",
+        analyze_status="PENDING",
+    )
+    session.add(incoming_item)
+    session.flush()
+
+    merged = DedupService(session).find_or_create(
+        event_key="time.new",
+        title="Timezone event",
+        summary="same event, another source",
+        why_it_matters="",
+        importance=3,
+        topic_id=topic.id,
+        occurred_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
+        source_item_id=incoming_item.id,
+        duplicate_keywords=[],
+    )
+    assert merged.id == existing.id
