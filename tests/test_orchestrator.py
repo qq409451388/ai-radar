@@ -69,6 +69,14 @@ def test_analyze_all_pending_items_drains_queue_in_batches(
             "batches": 3,
             "remaining_pending": 0,
         }
+        assert any(
+            total == 5 and "累计完成" in message and "/5" in message
+            for _current, total, message in progress
+        )
+        assert not any(
+            "累计完成" in message and "/2" in message
+            for _current, _total, message in progress
+        )
         assert progress[-1] == (5, 5, "全部批次完成，剩余待处理 0 条")
         with session_scope() as session:
             pending = session.scalar(

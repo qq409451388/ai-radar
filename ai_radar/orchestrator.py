@@ -204,12 +204,19 @@ def analyze_all_pending_items(
     while aggregate["processed"] < total:
         processed_before = aggregate["processed"]
 
-        def batch_progress(current: int, _batch_total: int, message: str) -> None:
+        def batch_progress(
+            current: int,
+            _batch_total: int,
+            _message: str,
+        ) -> None:
             if progress_callback:
+                overall_current = min(total, processed_before + current)
                 progress_callback(
-                    min(total, processed_before + current),
+                    overall_current,
                     total,
-                    message,
+                    f"正在处理第 {aggregate['batches'] + 1} 批"
+                    f"（每批最多 {size} 条），"
+                    f"累计完成 {overall_current}/{total} 条",
                 )
 
         result = analyze_pending_items(

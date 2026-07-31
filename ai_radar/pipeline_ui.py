@@ -102,19 +102,22 @@ def render_pipeline_progress(*, show_empty: bool = True) -> None:
         if active
         else ""
     )
-    st.markdown(
-        f"""
-        <div class="pipeline-run-head">
-          <div>
-            {running_dot}
-            <span class="pipeline-run-title">{escape(snapshot['pipeline_label'])}</span>
-            <span class="pipeline-status {status_class}">{escape(STATUS_LABELS.get(status, status))}</span>
-          </div>
-          <div class="pipeline-run-meta">#{snapshot['id']} · {escape(fmt_dt(snapshot['started_at']))} · {escape(elapsed)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # Keep this as a single unindented HTML string. Indented multiline markup
+    # can be interpreted as a Markdown code block during fragment refreshes,
+    # which exposes the literal <span> tags to the user.
+    run_head_html = (
+        '<div class="pipeline-run-head"><div>'
+        f"{running_dot}"
+        f'<span class="pipeline-run-title">'
+        f"{escape(snapshot['pipeline_label'])}</span>"
+        f'<span class="pipeline-status {status_class}">'
+        f"{escape(STATUS_LABELS.get(status, status))}</span>"
+        "</div>"
+        f'<div class="pipeline-run-meta">#{snapshot["id"]} · '
+        f"{escape(fmt_dt(snapshot['started_at']))} · {escape(elapsed)}</div>"
+        "</div>"
     )
+    st.markdown(run_head_html, unsafe_allow_html=True)
     progress = min(1.0, max(0.0, snapshot["progress"]))
     st.progress(
         progress,

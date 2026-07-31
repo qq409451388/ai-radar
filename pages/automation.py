@@ -93,7 +93,7 @@ def _render_operations() -> None:
         _job_status_label(jobs[0].status) if jobs else "还没有",
         _job_type_label(jobs[0].job_type) if jobs else None,
     )
-    st.caption("需要完整处理积压时，请点击左侧栏“运行 / 重跑更新”。")
+    st.caption("需要完整处理积压时，请点击左侧栏“打开更新中心”，再选择完整更新。")
 
     st.markdown("### 自动更新计划")
     scheduled = {

@@ -34,11 +34,26 @@ st.set_page_config(
 )
 
 
-@st.dialog("更新中心", width="large")
+def close_update_center() -> None:
+    st.session_state["_update_center_open"] = False
+
+
+@st.dialog(
+    "更新中心",
+    width="large",
+    on_dismiss=close_update_center,
+)
 def render_update_center() -> None:
-    render_pipeline_launcher()
-    st.divider()
-    render_pipeline_progress()
+    # Use Streamlit's own fixed-height scrolling container instead of styling
+    # dialog internals. This keeps the modal stable without disturbing columns,
+    # expanders, or progress widgets.
+    with st.container(
+        height=620,
+        border=False,
+        key="update_center_scroll",
+    ):
+        render_pipeline_launcher()
+        render_pipeline_progress()
 
 
 def ensure_initialized() -> None:
@@ -110,11 +125,12 @@ def render_sidebar_status() -> None:
         st.caption(f"近 {cfg.score_window_days} 天作为当前跟进窗口")
 
 
+@st.fragment(run_every=1.0)
 def render_sidebar_pipeline_status() -> None:
     snapshot = get_active_pipeline_snapshot()
     if snapshot is None:
-        label = "↻ 运行 / 重跑更新"
-        help_text = "采集资讯、调用 AI 分析并刷新知识进展"
+        label = "打开更新中心"
+        help_text = "点击后选择更新范围并开始任务"
     else:
         current = next(
             (
@@ -126,15 +142,18 @@ def render_sidebar_pipeline_status() -> None:
         )
         current_label = current["label"] if current else "正在准备"
         percent = int(snapshot["progress"] * 100)
-        label = f"↻ 更新进行中 · {percent}%"
-        help_text = f"{current_label}，点击查看每一步进度"
+        label = f"查看更新进度 · {percent}%"
+        help_text = f"{snapshot['pipeline_label']} · {current_label}"
     if st.button(
         label,
         width="stretch",
         key="sidebar_update_center",
         help=help_text,
     ):
-        render_update_center()
+        # Persist the open state across full-app reruns. Pipeline startup and
+        # Streamlit fragment refreshes must not dismiss the update center.
+        st.session_state["_update_center_open"] = True
+        st.rerun()
     st.caption(help_text)
 
 
@@ -165,6 +184,8 @@ if needs_setup:
         )
 else:
     render_sidebar_status()
+    if st.session_state.get("_update_center_open"):
+        render_update_center()
 
 home_page = st.Page(
     "pages/home.py",

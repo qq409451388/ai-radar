@@ -52,7 +52,22 @@ def _load_data() -> tuple[list[Topic], list[SourceConfig]]:
 def _render_add_source() -> None:
     topics, _sources = _load_data()
     topic_names = {topic.id: topic.name for topic in topics}
-    with st.expander("＋ 新增资讯源", expanded=False):
+    created_name = st.session_state.pop("_source_created_name", "")
+    if created_name:
+        st.toast(f"“{created_name}”已创建，请在列表中测试连接", icon="✅")
+
+    is_open = bool(st.session_state.get("_source_add_open", False))
+    button_label = "收起新增表单" if is_open else "＋ 新增资讯源"
+    if st.button(
+        button_label,
+        key="toggle_source_add_panel",
+    ):
+        st.session_state["_source_add_open"] = not is_open
+        st.rerun()
+    if not is_open:
+        return
+
+    with st.container(border=True):
         st.caption("保存后来源保持关闭；单点测试通过后，才可以开启自动采集。")
         with st.form("new_source", border=False, clear_on_submit=True):
             cols = st.columns([1.2, 1.2])
@@ -101,7 +116,8 @@ def _render_add_source() -> None:
                                 default_topic_id=topic_id,
                             )
                         )
-                    st.toast("来源已保存，请在下方测试连接", icon="🧪")
+                    st.session_state["_source_created_name"] = name.strip()
+                    st.session_state["_source_add_open"] = False
                     st.rerun()
                 except IntegrityError:
                     st.error("这个类型和 URL 已经存在。")
@@ -122,7 +138,14 @@ def _render_sources() -> None:
             test_status,
             TEST_LABELS["UNTESTED"],
         )
-        with st.container(border=True):
+        collection_status = "自动采集中" if source.enabled else status_text
+        summary = (
+            f"{source.name} · "
+            f"{TYPE_LABELS.get(source.source_type, source.source_type)} · "
+            f"{topic_names.get(source.default_topic_id, '未分类')} · "
+            f"{collection_status}"
+        )
+        with st.expander(summary, expanded=False):
             title_col, status_col = st.columns([4, 1])
             title_col.markdown(
                 f"**{escape(source.name)}**  "

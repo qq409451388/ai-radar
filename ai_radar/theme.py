@@ -29,6 +29,15 @@ def inject_app_styles() -> None:
           padding-top: 2rem;
           padding-bottom: 4rem;
         }
+        [data-testid="stDialog"] {
+          align-items:center !important;
+          padding:12px !important;
+          overflow:hidden !important;
+        }
+        [data-testid="stDialog"] > div {
+          max-height:calc(100dvh - 24px) !important;
+          margin:0 !important;
+        }
         h1, h2, h3 { letter-spacing: -.025em; color: var(--radar-ink); }
         h1 { font-size: 2.15rem !important; }
         .radar-brand { display:flex; align-items:center; gap:.75rem; padding:.4rem 0 1.5rem; }
