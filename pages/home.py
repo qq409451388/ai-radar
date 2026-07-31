@@ -186,7 +186,7 @@ def render() -> None:
             )
         else:
             st.caption(
-                f"每次最多分析 {cfg.analyze_batch_size} 条，避免一次耗尽 Token。"
+                f"完整更新会自动处理完队列，每批 {cfg.analyze_batch_size} 条。"
                 f"上次完整快照：{fmt_dt(last_pipeline.finished_at) if last_pipeline else '尚未生成'}"
             )
 

@@ -244,7 +244,15 @@ def _render_pipeline_progress() -> None:
             "页面每 2 秒刷新；模型单次请求较慢时，数字可能短暂停留。"
         )
     elif status == "SUCCESS":
-        st.success("流水线已完成，相关页面的数据已更新。")
+        analyze_result = snapshot["result"].get("analyze_all", {})
+        if analyze_result:
+            st.success(
+                f"完整更新已完成：共处理 "
+                f"{analyze_result.get('processed', 0)} 条，"
+                f"剩余待处理 {analyze_result.get('remaining_pending', 0)} 条。"
+            )
+        else:
+            st.success("流水线已完成，相关页面的数据已更新。")
     elif status == "PARTIAL":
         st.warning("流水线已完成，但部分项目处理失败。展开下方步骤可查看详情。")
     elif status in ("FAILED", "INTERRUPTED"):
@@ -457,7 +465,7 @@ def _render_config(cfg) -> None:
         ("LLM 模型", cfg.llm.model, bool(cfg.llm.model)),
         ("记忆仓库", cfg.profile.repo or "未配置", bool(cfg.profile.repo)),
         ("记忆 Token", "已配置" if cfg.profile.token else "未配置", bool(cfg.profile.token)),
-        ("分析批次", str(cfg.analyze_batch_size), True),
+        ("单批分析量", str(cfg.analyze_batch_size), True),
         ("当前评分窗口", f"{cfg.score_window_days} 天", True),
         ("单次最多候选事实", str(cfg.max_assessment_facts), True),
     ]

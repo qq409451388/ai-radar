@@ -35,7 +35,7 @@ def test_background_pipeline_runs_connected_steps(session, monkeypatch):
     snapshot = _wait_for_terminal(run_id)
 
     assert created is True
-    assert calls == ["collect", "analyze", "sync", "assess", "snapshot"]
+    assert calls == ["collect", "analyze_all", "sync", "assess", "snapshot"]
     assert snapshot["status"] == "SUCCESS"
     assert snapshot["progress"] == 1.0
     assert [step["status"] for step in snapshot["steps"]] == ["SUCCESS"] * 5
@@ -46,20 +46,20 @@ def test_pipeline_failure_stops_and_marks_remaining_steps(session, monkeypatch):
     _install_success_handlers(monkeypatch, calls)
 
     def fail_analysis(callback):
-        calls.append("analyze")
+        calls.append("analyze_all")
         callback(0, 1, "model request")
         raise RuntimeError("provider unavailable")
 
     monkeypatch.setitem(
         pipeline_runner.STEP_HANDLERS,
-        "analyze",
+        "analyze_all",
         fail_analysis,
     )
 
     run_id, _ = pipeline_runner.enqueue_pipeline("FULL_UPDATE")
     snapshot = _wait_for_terminal(run_id)
 
-    assert calls == ["collect", "analyze"]
+    assert calls == ["collect", "analyze_all"]
     assert snapshot["status"] == "FAILED"
     assert "provider unavailable" in snapshot["error"]
     assert [step["status"] for step in snapshot["steps"]] == [

@@ -10,10 +10,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import datetime, timezone
 
+from sqlalchemy import and_, func, or_, select
+
+from ai_radar.bootstrap import ANALYZE_FAILED, ANALYZE_PENDING
+from ai_radar.config import get_config
 from ai_radar.database import session_scope
 from ai_radar.llm.client import LlmClient
-from ai_radar.models import ProfileSourceFile
+from ai_radar.models import ProfileSourceFile, SourceItem
 from ai_radar.profile.fact_service import FactService
 from ai_radar.profile.sync_service import ProfileSyncService
 from ai_radar.services.analysis_service import AnalysisService
@@ -56,6 +61,103 @@ def analyze_pending_items(
         return AnalysisService(session, LlmClient(session)).analyze_pending(
             limit=limit,
             progress_callback=progress_callback,
+        )
+
+
+def analyze_all_pending_items(
+    batch_size: int | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
+    """Drain the current analyzable queue in independently committed batches."""
+    size = batch_size or get_config().analyze_batch_size
+    total = _count_analyzable_items()
+    aggregate = {
+        "processed": 0,
+        "success": 0,
+        "ignored": 0,
+        "failed": 0,
+        "new_change_points": 0,
+        "batch_size": size,
+        "batches": 0,
+        "remaining_pending": 0,
+    }
+    if progress_callback:
+        progress_callback(0, total, f"准备分批处理 {total} 条待分析资讯")
+
+    while aggregate["processed"] < total:
+        processed_before = aggregate["processed"]
+
+        def batch_progress(current: int, _batch_total: int, message: str) -> None:
+            if progress_callback:
+                progress_callback(
+                    min(total, processed_before + current),
+                    total,
+                    message,
+                )
+
+        result = analyze_pending_items(
+            limit=size,
+            progress_callback=batch_progress,
+        )
+        processed = int(result.get("processed", 0) or 0)
+        if processed == 0:
+            break
+        aggregate["batches"] += 1
+        for key in (
+            "processed",
+            "success",
+            "ignored",
+            "failed",
+            "new_change_points",
+        ):
+            aggregate[key] += int(result.get(key, 0) or 0)
+
+        if progress_callback:
+            progress_callback(
+                min(total, aggregate["processed"]),
+                total,
+                f"已完成第 {aggregate['batches']} 批，"
+                f"累计处理 {aggregate['processed']}/{total} 条",
+            )
+
+    with session_scope() as session:
+        aggregate["remaining_pending"] = int(
+            session.scalar(
+                select(func.count(SourceItem.id)).where(
+                    SourceItem.analyze_status == ANALYZE_PENDING
+                )
+            )
+            or 0
+        )
+    if progress_callback:
+        progress_callback(
+            total,
+            total,
+            f"全部批次完成，剩余待处理 {aggregate['remaining_pending']} 条",
+        )
+    return aggregate
+
+
+def _count_analyzable_items() -> int:
+    now = datetime.now(timezone.utc)
+    with session_scope() as session:
+        return int(
+            session.scalar(
+                select(func.count(SourceItem.id)).where(
+                    or_(
+                        SourceItem.analyze_status == ANALYZE_PENDING,
+                        and_(
+                            SourceItem.analyze_status == ANALYZE_FAILED,
+                            SourceItem.retry_count < 3,
+                            or_(
+                                SourceItem.next_retry_at.is_(None),
+                                SourceItem.next_retry_at <= now,
+                            ),
+                        ),
+                    )
+                )
+            )
+            or 0
         )
 
 

@@ -44,6 +44,11 @@ class PipelineDefinition:
 
 _COLLECT = StepDefinition("collect", "采集资讯", "从已启用来源拉取最新条目")
 _ANALYZE = StepDefinition("analyze", "AI 分析", "分析下一批待处理资讯并去重")
+_ANALYZE_ALL = StepDefinition(
+    "analyze_all",
+    "AI 分析",
+    "自动分批处理全部待处理资讯并去重",
+)
 _SYNC = StepDefinition("sync", "同步记忆", "同步 GPT 记录并抽取个人知识证据")
 _ASSESS = StepDefinition("assess", "关联评估", "评估知识变化与个人记录的覆盖关系")
 _SNAPSHOT = StepDefinition("snapshot", "更新快照", "重新计算并保存今日进展")
@@ -52,8 +57,8 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "FULL_UPDATE": PipelineDefinition(
         key="FULL_UPDATE",
         label="完整更新",
-        description="资讯、记忆和知识进展全部更新，适合每天运行一次。",
-        steps=(_COLLECT, _ANALYZE, _SYNC, _ASSESS, _SNAPSHOT),
+        description="采集并分批处理全部资讯，再更新记忆和知识进展。",
+        steps=(_COLLECT, _ANALYZE_ALL, _SYNC, _ASSESS, _SNAPSHOT),
     ),
     "INTELLIGENCE": PipelineDefinition(
         key="INTELLIGENCE",
@@ -85,6 +90,10 @@ def _analyze_handler(callback: ProgressCallback) -> dict[str, Any]:
     return orchestrator.analyze_pending_items(progress_callback=callback)
 
 
+def _analyze_all_handler(callback: ProgressCallback) -> dict[str, Any]:
+    return orchestrator.analyze_all_pending_items(progress_callback=callback)
+
+
 def _sync_handler(callback: ProgressCallback) -> dict[str, Any]:
     return orchestrator.sync_profile(progress_callback=callback)
 
@@ -103,6 +112,7 @@ def _snapshot_handler(callback: ProgressCallback) -> dict[str, Any]:
 STEP_HANDLERS: dict[str, StepHandler] = {
     "collect": _collect_handler,
     "analyze": _analyze_handler,
+    "analyze_all": _analyze_all_handler,
     "sync": _sync_handler,
     "assess": _assess_handler,
     "snapshot": _snapshot_handler,
@@ -584,6 +594,17 @@ def _failed_count(result: dict[str, Any]) -> int:
 
 def _result_message(result: dict[str, Any], status: str) -> str:
     processed, success, failed = _result_counts(result)
+    if "batches" in result:
+        message = (
+            f"完成 {int(result.get('batches', 0) or 0)} 批："
+            f"处理 {processed} 条，"
+            f"形成知识点 {int(result.get('new_change_points', 0) or 0)} 条，"
+            f"自动过滤 {int(result.get('ignored', 0) or 0)} 条，"
+            f"剩余待处理 {int(result.get('remaining_pending', 0) or 0)} 条"
+        )
+        if failed:
+            return f"{message}，失败 {failed} 条"
+        return message
     if status == "PARTIAL":
         return f"完成，但有 {failed} 项失败；已处理 {processed} 项"
     if processed:
