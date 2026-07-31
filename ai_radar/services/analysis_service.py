@@ -19,7 +19,7 @@ from ai_radar.llm.client import LlmClient, LlmError
 from ai_radar.models import SourceConfig, SourceItem, Topic
 from ai_radar.repositories.job_log import job_log
 from ai_radar.services.dedup_service import DedupService
-from ai_radar.utils import to_utc
+from ai_radar.utils import sha256_hex, to_utc
 
 log = logging.getLogger(__name__)
 
@@ -159,11 +159,23 @@ class AnalysisService:
 
         topic_id = self._resolve_topic_id(analysis.topic, source)
         occurred_at = _parse_date(analysis.occurred_at) or item.published_at
+        title = analysis.title.strip() or item.title.strip() or f"资讯 #{item.id}"
+        summary = (
+            analysis.summary.strip()
+            or (item.raw_content or "").strip()[:800]
+            or title
+        )
+        event_key = analysis.event_key.strip()
+        if not event_key:
+            fingerprint = sha256_hex(
+                f"{item.source_config_id}|{item.external_id}|{item.url}|{title}"
+            )[:20]
+            event_key = f"source-item.{fingerprint}"
 
         cp = self.dedup.find_or_create(
-            event_key=analysis.event_key,
-            title=analysis.title,
-            summary=analysis.summary,
+            event_key=event_key,
+            title=title,
+            summary=summary,
             why_it_matters=analysis.why_it_matters,
             importance=importance,
             topic_id=topic_id,

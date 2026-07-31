@@ -24,14 +24,33 @@ class ChangePointAnalysis(BaseModel):
     """Output of analyze_change_points for a single source item."""
 
     relevant: bool
-    topic: str = Field(description="一级领域名称")
-    event_key: str = Field(description="事件键，例如 coding-agent.trae-work.agent-mode")
-    title: str
-    summary: str
+    # Models commonly return only {"relevant": false, "event_key": ""} for
+    # filtered items. Optional defaults make that valid without weakening the
+    # relevant-item persistence rules in AnalysisService.
+    topic: str = Field(default="", description="一级领域名称")
+    event_key: str = Field(
+        default="", description="事件键，例如 coding-agent.trae-work.agent-mode"
+    )
+    title: str = ""
+    summary: str = ""
     why_it_matters: str = ""
     importance: ImportanceLiteral = 1
     occurred_at: str | None = Field(default=None, description="ISO date YYYY-MM-DD or null")
     duplicate_keywords: list[str] = Field(default_factory=list)
+
+    @field_validator("importance", mode="before")
+    @classmethod
+    def _normalize_importance(cls, value):
+        """Snap non-canonical model output (for example 0/2/4) to 1/3/5."""
+        try:
+            numeric = int(value)
+        except (TypeError, ValueError):
+            return 1
+        if numeric <= 1:
+            return 1
+        if numeric <= 3:
+            return 3
+        return 5
 
 
 class ProfileFactItem(BaseModel):

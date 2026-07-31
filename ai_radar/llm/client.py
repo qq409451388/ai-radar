@@ -107,7 +107,7 @@ class LlmClient:
         data = _parse_json_lenient(cleaned)
         if not isinstance(data, dict):
             raise LlmError(f"LLM did not return a JSON object: {cleaned[:200]}")
-        result = _validate_with_retries(model_cls, data)
+        result = _validate_structured(model_cls, data)
         self._cache_put(cache_key, operation, result.model_dump())
         input_tokens = int(usage.get("prompt_tokens") or 0)
         output_tokens = int(usage.get("completion_tokens") or 0)
@@ -240,12 +240,14 @@ def _parse_json_lenient(text: str):
     return None
 
 
-def _validate_with_retries(model_cls: type[TModel], data: dict) -> TModel:
-    last_exc: Exception | None = None
-    for attempt in range(_MAX_RETRIES + 1):
-        try:
-            return model_cls.model_validate(data)
-        except ValidationError as exc:
-            last_exc = exc
-            log.warning("LLM JSON validation failed (attempt %d): %s", attempt + 1, exc)
-    raise LlmError(f"LLM output failed Pydantic validation after retries: {last_exc}")
+def _validate_structured(model_cls: type[TModel], data: dict) -> TModel:
+    """Validate once.
+
+    HTTP retries happen in ``_chat``. Re-validating the exact same dictionary
+    cannot repair it and previously produced three identical warning blocks.
+    """
+    try:
+        return model_cls.model_validate(data)
+    except ValidationError as exc:
+        log.warning("LLM JSON validation failed: %s", exc)
+        raise LlmError(f"LLM output failed Pydantic validation: {exc}") from exc

@@ -136,7 +136,7 @@ ai-radar/
 ├── config/
 │   ├── app.example.yaml        不含密钥的用户配置模板
 │   └── default_sources.yaml    默认领域与资讯源
-├── tests/                      pytest 测试（24 项）
+├── tests/                      pytest 自动化测试
 ├── requirements.txt / .env.example（仅环境覆盖示例）
 ├── run.sh / run.bat            macOS、Linux、Windows 一键启动
 ```
@@ -305,7 +305,7 @@ github_release_sources:
 - 不得生成百分比/掌握度/熟练度/精通等主观评价。
 - 每条事实带 `evidence_type`：DISCUSSION / RESEARCH / DESIGN / DEMO / IMPLEMENTATION / PRODUCTION / DECISION。
 - 相同事实按 `fact_key` 与文本相似度去重；文件更新后消失的事实标记为 `active=false`，不物理删除。
-- LLM 输出经 Pydantic 校验，校验失败有限次重试，不允许自由格式直接入库。
+- LLM 输出经 Pydantic 校验；最小无关输出和非标准重要度会自动归一化，其余失败进入退避重试队列。
 - 非 NONE 覆盖必须匹配到真实事实；DISCUSSION 最高只能得到 AWARE。
 - 覆盖评估采用追加历史，不再删除旧判断。
 - 精确相同的 Prompt + 模型会命中 SQLite 持久缓存，不重复请求 LLM。
@@ -328,7 +328,7 @@ github_release_sources:
 | 现象 | 处理 |
 | --- | --- |
 | LLM 调用 401/403 | 检查 `LLM_API_KEY` 与 `LLM_BASE_URL` |
-| LLM JSON 校验失败 | 自动重试 2 次；仍失败则该条资讯记为 `FAILED`，不影响其它条目 |
+| LLM JSON 校验失败 | 常见字段偏差自动兼容；其余记为 `FAILED` 并按退避策略重试 |
 | GitHub 401/403 | 检查 `PROFILE_GITHUB_TOKEN` 权限（需 `Contents: Read`） |
 | GitHub 限流 403/429 | 该来源本次跳过，下次重试；建议配置 `GITHUB_TOKEN` |
 | RSS 源 malformed | feedparser 容错解析，并在日志中告警 |
@@ -359,7 +359,7 @@ cp data/ai_radar.db data/ai_radar.$(date +%Y%m%d).db
 .venv/bin/python -m pytest -q
 ```
 
-覆盖评分算法、新增知识点致分数下降、DEPRECATED 排除、RSS/GitHub Release 去重、event_key 合并、SQLite 时区兼容、事实增量抽取与失败重试、证据等级硬约束、覆盖历史保留、LLM 持久缓存、跨平台用户配置与优先级、同步失败保留事实、快照 delta 计算（共 24 项）。
+测试覆盖评分算法、新增知识点致分数下降、DEPRECATED 排除、RSS/GitHub Release 去重、event_key 合并、SQLite 时区兼容、LLM 输出归一化、事实增量抽取与失败重试、证据等级硬约束、覆盖历史保留、LLM 持久缓存、跨平台用户配置与优先级、同步失败保留事实和快照 delta 计算。
 
 ## 限制与说明
 

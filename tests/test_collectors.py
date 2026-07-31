@@ -19,6 +19,8 @@ from ai_radar.models import (
     SourceConfig,
     SourceItem,
 )
+from ai_radar.llm.schemas import ChangePointAnalysis
+from ai_radar.services.analysis_service import AnalysisService
 from ai_radar.services.collection_service import CollectionService
 from ai_radar.services.dedup_service import DedupService
 
@@ -227,3 +229,34 @@ def test_dedup_handles_sqlite_naive_and_aware_datetimes(session):
         duplicate_keywords=[],
     )
     assert merged.id == existing.id
+
+
+def test_analysis_fills_missing_relevant_fields(session):
+    topic = __import__("ai_radar.models", fromlist=["Topic"]).Topic(name="回退领域")
+    session.add(topic)
+    source = _make_source(session, url="https://x/fallback-feed")
+    source.default_topic_id = topic.id
+    item = SourceItem(
+        source_config_id=source.id,
+        external_id="fallback-1",
+        title="Original source title",
+        url="https://x/fallback-1",
+        raw_content="Original source summary",
+        content_hash="fallback-h1",
+        analyze_status="PENDING",
+    )
+    session.add(item)
+    session.flush()
+
+    class SparseLlm:
+        def extract_change_points(self, payload):
+            return ChangePointAnalysis(relevant=True, importance=0)
+
+    result = AnalysisService(session, SparseLlm())._analyze_one(item)  # type: ignore[arg-type]
+    cp = session.get(ChangePoint, result["change_point_id"])
+    assert cp is not None
+    assert cp.title == "Original source title"
+    assert cp.summary == "Original source summary"
+    assert cp.event_key.startswith("source-item.")
+    assert cp.importance == 1
+    assert cp.topic_id == topic.id
