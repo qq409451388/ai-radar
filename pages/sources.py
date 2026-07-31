@@ -20,9 +20,9 @@ TYPE_LABELS = {
     "GITHUB_COMMIT": "GitHub 文档变更",
 }
 TEST_LABELS = {
-    "PASSED": ("可启用", "success"),
-    "FAILED": ("测试失败", "failed"),
-    "UNTESTED": ("等待测试", "pending"),
+    "PASSED": ("连接正常", "success"),
+    "FAILED": ("连接异常", "failed"),
+    "UNTESTED": ("待测试", "pending"),
 }
 
 
@@ -135,11 +135,56 @@ def _render_add_source() -> None:
 def _render_sources() -> None:
     topics, sources = _load_data()
     topic_names = {topic.id: topic.name for topic in topics}
-    st.markdown("### 已配置来源")
-    st.caption(f"共 {len(sources)} 个来源 · 只有测试通过的来源可以开启")
+
+    heading_col, action_col = st.columns(
+        [4, 1.15],
+        vertical_alignment="bottom",
+    )
+    heading_col.markdown("### 已配置来源")
+    heading_col.caption(
+        f"共 {len(sources)} 个来源 · 展开单项可测试、启停或打开原站"
+    )
+    test_all = action_col.button(
+        "测试全部来源",
+        key="test_all_sources",
+        width="stretch",
+        disabled=not sources,
+    )
+
     if not sources:
         st.info("还没有资讯源。请先从上方添加一个。")
         return
+
+    if test_all:
+        progress = st.progress(0, text="准备测试全部资讯源")
+
+        def update_progress(done: int, total: int, message: str) -> None:
+            ratio = done / total if total else 1.0
+            progress.progress(ratio, text=message)
+
+        result = orchestrator.test_all_sources(
+            progress_callback=update_progress,
+        )
+        progress.empty()
+        st.session_state["_all_source_test_result"] = result
+        st.rerun()
+
+    all_result = st.session_state.pop("_all_source_test_result", None)
+    if all_result:
+        if all_result["failed"]:
+            failed_names = [
+                item["source"]
+                for item in all_result["results"]
+                if item["status"] == "FAILED"
+            ]
+            preview = "、".join(failed_names[:3])
+            suffix = "等" if len(failed_names) > 3 else ""
+            st.warning(
+                f"测试完成：{all_result['passed']} 个正常，"
+                f"{all_result['failed']} 个异常（{preview}{suffix}）。"
+            )
+        else:
+            st.success(f"全部 {all_result['passed']} 个来源连接正常。")
 
     for source in sources:
         test_status = source.test_status or "UNTESTED"
@@ -147,35 +192,52 @@ def _render_sources() -> None:
             test_status,
             TEST_LABELS["UNTESTED"],
         )
-        collection_status = "自动采集中" if source.enabled else status_text
+        collection_status, state_icon = _source_state(source)
         summary = (
-            f"{source.name} · "
-            f"{TYPE_LABELS.get(source.source_type, source.source_type)} · "
-            f"{topic_names.get(source.default_topic_id, '自动分配')} · "
+            f"{source.name}　·　"
+            f"{TYPE_LABELS.get(source.source_type, source.source_type)}　·　"
+            f"{topic_names.get(source.default_topic_id, '自动分配')}　·　"
             f"{collection_status}"
         )
-        with st.expander(summary, expanded=False):
-            title_col, status_col = st.columns([4, 1])
-            title_col.markdown(
-                f"**{escape(source.name)}**  "
-                f'<span class="source-type">{escape(TYPE_LABELS.get(source.source_type, source.source_type))}</span>',
+        with st.expander(
+            summary,
+            expanded=False,
+            key=f"source_details_{source.id}",
+            icon=state_icon,
+            type="compact",
+        ):
+            st.markdown(
+                '<div class="source-detail-meta">'
+                "<div><span>连接状态</span>"
+                f'<strong class="{status_class}">{escape(status_text)}</strong></div>'
+                "<div><span>最近测试</span>"
+                f"<strong>{escape(fmt_dt(source.last_tested_at))}</strong></div>"
+                "<div><span>最近采集</span>"
+                f"<strong>{escape(fmt_dt(source.last_collected_at))}</strong></div>"
+                "</div>",
                 unsafe_allow_html=True,
             )
-            title_col.caption(
-                f"{topic_names.get(source.default_topic_id, '自动分配')} · "
-                f"最近采集 {fmt_dt(source.last_collected_at)}"
-            )
-            status_col.markdown(
-                f'<span class="source-test-status {status_class}">{escape(status_text)}</span>',
+            link_markup = escape(source.url)
+            if source.url.startswith(("https://", "http://")):
+                link_markup = (
+                    f'<a href="{escape(source.url, quote=True)}" target="_blank">'
+                    f"{escape(source.url)}</a>"
+                )
+            st.markdown(
+                f'<div class="source-detail-url">{link_markup}</div>',
                 unsafe_allow_html=True,
             )
-            st.caption(source.url)
             if source.path_filter:
-                st.caption(f"关注范围：{source.path_filter}")
+                st.markdown(
+                    '<div class="source-detail-scope">'
+                    f"只关注：{escape(source.path_filter)}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
 
-            test_col, enable_col, link_col = st.columns([1.2, 1.2, 2.6])
+            test_col, enable_col, link_col = st.columns([1.15, 1.2, 1.15])
             if test_col.button(
-                "测试连接",
+                "重新测试",
                 key=f"test_source_{source.id}",
                 width="stretch",
             ):
@@ -226,6 +288,17 @@ def _render_sources() -> None:
                     st.error(result.get("error") or "无法访问该来源")
             elif source.last_error:
                 st.error(source.last_error)
+
+
+def _source_state(source: SourceConfig) -> tuple[str, str]:
+    test_status = source.test_status or "UNTESTED"
+    if test_status == "FAILED":
+        return "连接异常", ":material/error:"
+    if test_status != "PASSED":
+        return "待测试", ":material/pending:"
+    if source.enabled:
+        return "采集中", ":material/check_circle:"
+    return "已停用", ":material/pause_circle:"
 
 
 render()
