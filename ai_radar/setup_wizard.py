@@ -136,6 +136,12 @@ def build_user_config(cfg: Any, values: Mapping[str, Any]) -> dict[str, Any]:
             ),
             "score_window_days": int(values["score_window_days"]),
             "max_assessment_facts": int(values["max_assessment_facts"]),
+            "content_language": str(
+                values.get(
+                    "content_language",
+                    getattr(cfg, "content_language", "zh-CN"),
+                )
+            ),
         }
     )
     return data

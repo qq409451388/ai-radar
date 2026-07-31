@@ -13,6 +13,14 @@ def sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def compact_text(value: str | None, limit: int = 300) -> str:
+    """Collapse whitespace and keep display copy within a hard character cap."""
+    text = " ".join((value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
 def to_utc(dt: datetime | None) -> datetime | None:
     """Normalize a datetime to UTC-aware. None passes through."""
     if dt is None:

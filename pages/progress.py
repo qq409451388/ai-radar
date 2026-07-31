@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections import Counter
+from html import escape
+from math import ceil
 
 import altair as alt
 import pandas as pd
@@ -19,6 +21,7 @@ from ai_radar.models import (
 )
 from ai_radar.services.scoring_service import ScoringService
 from ai_radar.ui import fmt_dt
+from ai_radar.utils import compact_text
 
 EVIDENCE_LABEL = {
     "DISCUSSION": "讨论",
@@ -29,6 +32,22 @@ EVIDENCE_LABEL = {
     "PRODUCTION": "生产",
     "DECISION": "决策",
 }
+EVIDENCE_TONE = {
+    "DISCUSSION": "discussion",
+    "RESEARCH": "research",
+    "DESIGN": "design",
+    "DEMO": "practice",
+    "IMPLEMENTATION": "practice",
+    "PRODUCTION": "production",
+    "DECISION": "decision",
+}
+COVERAGE_LABEL = {
+    "NONE": "未覆盖",
+    "AWARE": "已关注",
+    "UNDERSTOOD": "已理解",
+    "PRACTICED": "已实践",
+}
+FACT_PAGE_SIZE = 20
 
 
 def render() -> None:
@@ -100,8 +119,8 @@ def render() -> None:
         metrics[2].metric("实践证据", practiced)
         metrics[3].metric("待归类事实", unclassified)
 
-        overview_tab, evidence_tab, files_tab = st.tabs(
-            ["进展概览", "事实证据", "同步文件"]
+        overview_tab, evidence_tab, files_tab, transitions_tab = st.tabs(
+            ["进展概览", "事实证据", "同步文件", "最近覆盖变化"]
         )
         with overview_tab:
             st.markdown("### 领域温度")
@@ -133,68 +152,8 @@ def render() -> None:
                     f"实践率 {item['practiced_rate']:.0f}%"
                 )
 
-            st.divider()
-            left, right = st.columns([1.45, 1])
-            with left:
-                st.markdown("### 领域证据分布")
-                counts = Counter(
-                    topic_names.get(fact.topic_id, "待归类") for fact in facts
-                )
-                if counts:
-                    data = pd.DataFrame(
-                        [
-                            {"领域": name, "事实数": count}
-                            for name, count in counts.most_common()
-                        ]
-                    )
-                    chart_height = max(220, min(460, len(data) * 38))
-                    chart = (
-                        alt.Chart(data)
-                        .mark_bar(
-                            color="#5b5bd6",
-                            cornerRadiusEnd=5,
-                            size=18,
-                        )
-                        .encode(
-                            y=alt.Y(
-                                "领域:N",
-                                sort=alt.SortField(
-                                    field="事实数",
-                                    order="descending",
-                                ),
-                                axis=alt.Axis(
-                                    title=None,
-                                    labelLimit=260,
-                                    labelPadding=10,
-                                ),
-                            ),
-                            x=alt.X(
-                                "事实数:Q",
-                                axis=alt.Axis(
-                                    title=None,
-                                    tickMinStep=1,
-                                    gridColor="#eceef3",
-                                ),
-                            ),
-                            tooltip=["领域:N", "事实数:Q"],
-                        )
-                        .properties(height=chart_height)
-                    )
-                    st.altair_chart(chart, width="stretch")
-                else:
-                    st.info("还没有事实记录。先同步 GPT 记忆。")
-            with right:
-                st.markdown("### 最近覆盖变化")
-                if not transitions:
-                    st.caption("尚无覆盖评估记录")
-                for cov, cp in transitions[:10]:
-                    st.markdown(f"**{cp.title[:42]}**")
-                    st.caption(
-                        f"{cov.coverage_level} · {cov.trigger_type} · "
-                        f"{fmt_dt(cov.assessed_at)}"
-                    )
-
         with evidence_tab:
+            _render_evidence_distribution(facts, topic_names)
             filter_cols = st.columns([1.4, 1.4, 2])
             selected_topic = filter_cols[0].selectbox(
                 "领域",
@@ -202,6 +161,7 @@ def render() -> None:
                 format_func=lambda value: "全部领域"
                 if value is None
                 else topic_names[value],
+                key="progress_fact_topic",
             )
             selected_evidence = filter_cols[1].selectbox(
                 "证据类型",
@@ -209,8 +169,12 @@ def render() -> None:
                 format_func=lambda value: "全部类型"
                 if value is None
                 else EVIDENCE_LABEL[value],
+                key="progress_fact_evidence",
             )
-            keyword = filter_cols[2].text_input("搜索事实")
+            keyword = filter_cols[2].text_input(
+                "搜索事实",
+                key="progress_fact_keyword",
+            )
             filtered = [
                 fact
                 for fact in facts
@@ -225,22 +189,11 @@ def render() -> None:
                     or keyword.lower() in fact.fact_key.lower()
                 )
             ]
-            st.caption(f"显示 {len(filtered)} 条")
-            for fact in filtered[:100]:
-                with st.expander(
-                    f"{EVIDENCE_LABEL.get(fact.evidence_type, fact.evidence_type)} · "
-                    f"{fact.fact_text[:56]}"
-                ):
-                    st.write(fact.fact_text)
-                    source_file = session.get(
-                        ProfileSourceFile, fact.source_file_id
-                    )
-                    st.caption(
-                        f"{topic_names.get(fact.topic_id, '待归类')} · "
-                        f"{source_file.file_path if source_file else '未知文件'}:"
-                        f"{fact.source_line_start}-{fact.source_line_end} · "
-                        f"抽取 {fmt_dt(fact.extracted_at)}"
-                    )
+            _render_fact_list(
+                filtered,
+                topic_names,
+                {source_file.id: source_file for source_file in files},
+            )
 
         with files_tab:
             if not files:
@@ -274,6 +227,252 @@ def render() -> None:
                         f"{file_fact_count} 条有效事实 · "
                         f"内容 hash {source_file.content_hash[:12]}…"
                     )
+
+        with transitions_tab:
+            _render_transitions(transitions, topic_names)
+
+
+def _render_evidence_distribution(
+    facts: list[ProfileFact],
+    topic_names: dict[int, str],
+) -> None:
+    st.markdown("### 领域证据分布")
+    st.caption("先看证据集中在哪些领域，再筛选下方事实。")
+    counts = Counter(
+        topic_names.get(fact.topic_id, "待归类") for fact in facts
+    )
+    if not counts:
+        st.info("还没有事实记录。先同步 GPT 记忆。")
+        return
+    data = pd.DataFrame(
+        [
+            {"领域": name, "事实数": count}
+            for name, count in counts.most_common()
+        ]
+    )
+    chart_height = max(220, min(460, len(data) * 38))
+    chart = (
+        alt.Chart(data)
+        .mark_bar(
+            color="#5b5bd6",
+            cornerRadiusEnd=5,
+            size=18,
+        )
+        .encode(
+            y=alt.Y(
+                "领域:N",
+                sort=alt.SortField(
+                    field="事实数",
+                    order="descending",
+                ),
+                axis=alt.Axis(
+                    title=None,
+                    labelLimit=320,
+                    labelPadding=10,
+                ),
+            ),
+            x=alt.X(
+                "事实数:Q",
+                axis=alt.Axis(
+                    title=None,
+                    tickMinStep=1,
+                    gridColor="#eceef3",
+                ),
+            ),
+            tooltip=["领域:N", "事实数:Q"],
+        )
+        .properties(height=chart_height)
+    )
+    st.altair_chart(chart, width="stretch")
+    st.divider()
+
+
+def _render_fact_list(
+    facts: list[ProfileFact],
+    topic_names: dict[int, str],
+    source_files: dict[int, ProfileSourceFile],
+) -> None:
+    signature = tuple(fact.id for fact in facts)
+    if st.session_state.get("_progress_fact_page_signature") != signature:
+        st.session_state["_progress_fact_page_signature"] = signature
+        st.session_state["progress_fact_page"] = 1
+        st.session_state.pop("_progress_open_fact_id", None)
+    page = _progress_pagination(
+        len(facts),
+        "progress_fact_page",
+    )
+    if not facts:
+        st.info("当前筛选下没有事实证据。")
+        return
+    visible = facts[
+        (page - 1) * FACT_PAGE_SIZE:
+        page * FACT_PAGE_SIZE
+    ]
+    for fact in visible:
+        source_file = source_files.get(fact.source_file_id)
+        is_open = (
+            st.session_state.get("_progress_open_fact_id") == fact.id
+        )
+        with st.container(
+            border=True,
+            key=f"progress_fact_card_{fact.id}",
+        ):
+            heading_col, action_col = st.columns(
+                [5.2, .8],
+                vertical_alignment="center",
+            )
+            evidence_label = EVIDENCE_LABEL.get(
+                fact.evidence_type,
+                fact.evidence_type,
+            )
+            tone = EVIDENCE_TONE.get(fact.evidence_type, "neutral")
+            heading_col.markdown(
+                '<div class="progress-list-heading">'
+                '<div class="progress-list-meta">'
+                f'<span class="progress-evidence {tone}">'
+                f"{escape(evidence_label)}</span>"
+                f"<span>{escape(topic_names.get(fact.topic_id, '待归类'))}</span>"
+                f"<span>抽取 {escape(fmt_dt(fact.extracted_at))}</span>"
+                "</div>"
+                '<div class="progress-list-title">'
+                f"{escape(compact_text(fact.fact_text, 120))}"
+                "</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if action_col.button(
+                "收起" if is_open else "查看",
+                key=f"toggle_progress_fact_{fact.id}",
+                width="stretch",
+            ):
+                if is_open:
+                    st.session_state.pop("_progress_open_fact_id", None)
+                else:
+                    st.session_state["_progress_open_fact_id"] = fact.id
+                st.rerun()
+            if not is_open:
+                continue
+            st.markdown(
+                '<div class="progress-detail-divider"></div>',
+                unsafe_allow_html=True,
+            )
+            st.write(fact.fact_text)
+            st.caption(
+                f"{source_file.file_path if source_file else '未知文件'}:"
+                f"{fact.source_line_start}-{fact.source_line_end}"
+                f" · fact_key {fact.fact_key}"
+            )
+
+
+def _render_transitions(
+    transitions: list[tuple[KnowledgeCoverage, ChangePoint]],
+    topic_names: dict[int, str],
+) -> None:
+    st.markdown("### 最近覆盖变化")
+    st.caption("按评估时间倒序，只在需要时展开判断依据。")
+    if not transitions:
+        st.info("尚无覆盖评估记录。")
+        return
+    page = _progress_pagination(
+        len(transitions),
+        "progress_transition_page",
+    )
+    visible = transitions[
+        (page - 1) * FACT_PAGE_SIZE:
+        page * FACT_PAGE_SIZE
+    ]
+    for coverage, change_point in visible:
+        is_open = (
+            st.session_state.get("_progress_open_transition_id")
+            == coverage.id
+        )
+        with st.container(
+            border=True,
+            key=f"progress_transition_card_{coverage.id}",
+        ):
+            heading_col, action_col = st.columns(
+                [5.2, .8],
+                vertical_alignment="center",
+            )
+            level = coverage.coverage_level
+            heading_col.markdown(
+                '<div class="progress-list-heading">'
+                '<div class="progress-list-meta">'
+                f'<span class="progress-coverage {level.lower()}">'
+                f"{escape(COVERAGE_LABEL.get(level, level))}</span>"
+                f"<span>{escape(topic_names.get(change_point.topic_id, '未分类'))}</span>"
+                f"<span>{escape(fmt_dt(coverage.assessed_at))}</span>"
+                "</div>"
+                '<div class="progress-list-title">'
+                f"{escape(compact_text(change_point.title, 120))}"
+                "</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if action_col.button(
+                "收起" if is_open else "查看",
+                key=f"toggle_progress_transition_{coverage.id}",
+                width="stretch",
+            ):
+                if is_open:
+                    st.session_state.pop(
+                        "_progress_open_transition_id",
+                        None,
+                    )
+                else:
+                    st.session_state[
+                        "_progress_open_transition_id"
+                    ] = coverage.id
+                st.rerun()
+            if not is_open:
+                continue
+            st.markdown(
+                '<div class="progress-detail-divider"></div>',
+                unsafe_allow_html=True,
+            )
+            st.write(coverage.rationale or "暂无判断说明")
+            st.caption(
+                f"触发方式：{coverage.trigger_type} · "
+                f"置信度 {coverage.confidence:.0%} · "
+                f"模型 {coverage.model_name or '规则'}"
+            )
+
+
+def _progress_pagination(total: int, key: str) -> int:
+    total_pages = max(1, ceil(total / FACT_PAGE_SIZE))
+    page = min(
+        total_pages,
+        max(1, int(st.session_state.get(key, 1))),
+    )
+    st.session_state[key] = page
+    start = (page - 1) * FACT_PAGE_SIZE + 1 if total else 0
+    end = min(page * FACT_PAGE_SIZE, total)
+    info_col, previous_col, next_col = st.columns(
+        [4.8, .8, .8],
+        vertical_alignment="center",
+    )
+    info_col.caption(
+        f"共 {total} 条 · 当前 {start}–{end}"
+        if total
+        else "当前没有内容"
+    )
+    if previous_col.button(
+        "上一页",
+        key=f"{key}_previous",
+        width="stretch",
+        disabled=page <= 1,
+    ):
+        st.session_state[key] = page - 1
+        st.rerun()
+    if next_col.button(
+        "下一页",
+        key=f"{key}_next",
+        width="stretch",
+        disabled=page >= total_pages,
+    ):
+        st.session_state[key] = page + 1
+        st.rerun()
+    return page
 
 
 def _query_int(key: str) -> int | None:

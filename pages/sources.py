@@ -195,7 +195,7 @@ def _render_sources() -> None:
         )
         collection_status, state_icon, state_class = _source_state(source)
         summary = (
-            f"{source.name}　·　"
+            f"{state_icon}　{source.name}　·　"
             f"{TYPE_LABELS.get(source.source_type, source.source_type)}　·　"
             f"{topic_names.get(source.default_topic_id, '自动分配')}　·　"
             f"{collection_status}"
@@ -204,7 +204,6 @@ def _render_sources() -> None:
             summary,
             expanded=False,
             key=f"source_details_{state_class}_{source.id}",
-            icon=state_icon,
             type="compact",
         ):
             st.markdown(

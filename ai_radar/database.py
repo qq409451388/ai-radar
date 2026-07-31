@@ -97,6 +97,9 @@ def _apply_additive_migrations(engine: Engine) -> None:
             "retry_count": "INTEGER NOT NULL DEFAULT 0",
             "next_retry_at": "DATETIME",
             "last_analyzed_at": "DATETIME",
+            "display_title": "VARCHAR(512) NOT NULL DEFAULT ''",
+            "display_summary": "TEXT NOT NULL DEFAULT ''",
+            "display_language": "VARCHAR(16) NOT NULL DEFAULT ''",
         },
         "profile_source_file": {
             "extracted_content_hash": "VARCHAR(64) NOT NULL DEFAULT ''",

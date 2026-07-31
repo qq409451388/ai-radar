@@ -24,7 +24,7 @@ from ai_radar.ui import (
     signal_type_label,
     sources_for_change_point,
 )
-from ai_radar.utils import load_json
+from ai_radar.utils import compact_text, load_json
 
 LEVEL_LABEL = {
     "NONE": "未覆盖",
@@ -416,7 +416,7 @@ def _render_change_point(
             f"<span>发现 {escape(fmt_dt(cp.first_seen_at))}</span>"
             "</div>"
             '<div class="knowledge-list-title">'
-            f"{escape(cp.title)}"
+            f"{escape(compact_text(cp.title, 80))}"
             f'<span class="knowledge-level {level.lower()}">'
             f"{escape(LEVEL_LABEL[level])}</span>"
             "</div>"
@@ -443,7 +443,7 @@ def _render_change_point(
             unsafe_allow_html=True,
         )
         st.markdown("#### 发生了什么")
-        st.write(cp.summary or "暂无摘要")
+        st.write(compact_text(cp.summary or "暂无摘要", 300))
         if cp.why_it_matters:
             st.info(cp.why_it_matters, icon="💡")
 
@@ -508,7 +508,9 @@ def _render_change_point(
         with source_tab:
             sources = sources_for_change_point(session, cp.id)
             for item in sources:
-                st.markdown(f"- [{item.title or item.url}]({item.url})")
+                st.markdown(
+                    f"- [{item.display_title or item.title or item.url}]({item.url})"
+                )
                 st.caption(
                     f"发布 {fmt_dt(item.published_at)} · {item.author or '官方'}"
                 )

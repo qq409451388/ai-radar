@@ -28,6 +28,8 @@ profile:
 app:
   db_path: data/ai_radar.db
   timezone: Asia/Shanghai
+  # Language used for translated intelligence titles and summaries.
+  content_language: zh-CN
   scheduler_enabled: true
   http_timeout: 20
   analyze_batch_size: 30

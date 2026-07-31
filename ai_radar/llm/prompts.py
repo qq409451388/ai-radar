@@ -44,6 +44,12 @@ ANALYZE_PROMPT = dedent(
     importance 取值：1（普通版本更新/小功能）、3（值得关注的新产品/新能力/新工具）、5（行业标准、重大架构变化、重要产品转型）。
     event_key 用小写、点分层级，例如：coding-agent.trae-work.agent-mode。
 
+    展示文案规则：
+    - 无论原文是什么语言，title、summary、why_it_matters 都必须使用{output_language}。
+    - title 必须是翻译并整理后的短标题，不得直接保留其他语言的完整标题，最多 80 个字符。
+    - summary 必须脱离原文也能看懂发生了什么，只保留一段，最多 300 个字符。
+    - 即使 relevant=false，也要尽量返回翻译后的 title 和 300 字内 summary，方便归档页展示。
+
     严格只输出以下 JSON（不要 markdown 代码块，不要多余字段）：
     {{
       "relevant": true,
@@ -152,9 +158,11 @@ def render_analyze(
     url: str,
     published_at: str,
     content: str,
+    output_language: str,
 ) -> str:
     return ANALYZE_PROMPT.format(
         topics=TOPICS_BLOCK,
+        output_language=output_language,
         source_name=source_name,
         source_type=source_type,
         title=title,

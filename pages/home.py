@@ -12,6 +12,7 @@ from ai_radar.pipeline_runner import (
     get_active_pipeline_snapshot,
 )
 from ai_radar.services.radar_service import RadarService
+from ai_radar.utils import compact_text
 from ai_radar.ui import fmt_dt, signal_type_label
 
 
@@ -148,7 +149,7 @@ def _render_focus_item(item) -> None:
             f"{supplement}"
         )
         st.markdown(
-            f'<div class="focus-summary">{escape(item.summary or "暂无摘要")}</div>',
+            f'<div class="focus-summary">{escape(compact_text(item.summary or "暂无摘要", 300))}</div>',
             unsafe_allow_html=True,
         )
         action_columns = st.columns([1, 1.15, 1, 3.5])

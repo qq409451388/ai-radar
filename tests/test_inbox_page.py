@@ -67,7 +67,10 @@ def test_queue_is_paginated_and_shows_colored_source_title(
                     SourceItem(
                         source_config_id=source.id,
                         external_id=f"item-{index}",
-                        title=f"情报 {index}",
+                        title=f"English intelligence {index}",
+                        display_title=f"中文情报 {index}",
+                        display_summary="中文摘要",
+                        display_language="zh-CN",
                         url=f"https://example.com/{index}",
                         raw_content="content",
                         content_hash=f"hash-{index}",
@@ -89,6 +92,8 @@ def test_queue_is_paginated_and_shows_colored_source_title(
         ]
         assert len(headings) == 20
         assert all("OpenAI Changelog" in heading for heading in headings)
+        assert all("中文情报" in heading for heading in headings)
+        assert all("English intelligence" not in heading for heading in headings)
         assert any("inbox-source-inline rss" in heading for heading in headings)
     finally:
         reset_config()

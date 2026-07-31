@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ai_radar.config import get_config, mask_secret
+from ai_radar.config import CONTENT_LANGUAGE_LABELS, get_config, mask_secret
 from ai_radar.llm import prompts
 from ai_radar.llm.schemas import (
     ChangePointAnalysis,
@@ -61,6 +61,7 @@ class LlmClient:
     # ---------- public API ----------
 
     def extract_change_points(self, item_payload: dict) -> ChangePointAnalysis:
+        content_language = get_config().content_language
         prompt = prompts.render_analyze(
             source_name=item_payload["source_name"],
             source_type=item_payload.get("source_type", ""),
@@ -68,6 +69,10 @@ class LlmClient:
             url=item_payload["url"],
             published_at=item_payload["published_at"],
             content=item_payload["content"],
+            output_language=CONTENT_LANGUAGE_LABELS.get(
+                content_language,
+                "简体中文",
+            ),
         )
         return self._call_structured(prompt, ChangePointAnalysis, "analyze_change_point")
 

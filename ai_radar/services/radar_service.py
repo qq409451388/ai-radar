@@ -245,7 +245,9 @@ class RadarService:
             first_seen_at=cp.first_seen_at,
             source_count=source_count,
             primary_source_url=primary.url if primary else "",
-            primary_source_title=(primary.title or "打开官方来源")
+            primary_source_title=(
+                primary.display_title or primary.title or "打开官方来源"
+            )
             if primary
             else "",
             priority_score=_priority_score(

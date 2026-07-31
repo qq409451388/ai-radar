@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ai_radar.bootstrap import STATUS_ACTIVE
 from ai_radar.bootstrap import SIGNAL_PRIORITY
 from ai_radar.models import ChangePoint, ChangePointSource, SourceItem
+from ai_radar.utils import compact_text
 from ai_radar.utils import to_utc
 
 log = logging.getLogger(__name__)
@@ -87,7 +88,12 @@ class DedupService:
             if why_it_matters and not existing.why_it_matters:
                 existing.why_it_matters = why_it_matters
             if summary and summary not in existing.summary:
-                existing.summary = (existing.summary + "\n" + summary).strip() if existing.summary else summary
+                combined = (
+                    (existing.summary + "\n" + summary).strip()
+                    if existing.summary
+                    else summary
+                )
+                existing.summary = compact_text(combined, 300)
             existing.last_seen_at = datetime.now(timezone.utc)
             if topic_id and not existing.topic_id:
                 existing.topic_id = topic_id

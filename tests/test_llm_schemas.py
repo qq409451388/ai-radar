@@ -45,3 +45,19 @@ def test_signal_type_is_normalized(raw, expected):
         {"relevant": True, "signal_type": raw}
     )
     assert result.signal_type == expected
+
+
+def test_display_copy_is_compacted_and_capped():
+    result = ChangePointAnalysis.model_validate(
+        {
+            "relevant": True,
+            "title": "  中文   标题  ",
+            "summary": "摘" * 400,
+            "why_it_matters": "原因" * 200,
+        }
+    )
+
+    assert result.title == "中文 标题"
+    assert len(result.summary) == 300
+    assert result.summary.endswith("…")
+    assert len(result.why_it_matters) == 300

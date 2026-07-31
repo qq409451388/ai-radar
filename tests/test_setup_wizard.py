@@ -81,6 +81,7 @@ def test_build_user_config_preserves_existing_secrets_when_inputs_are_blank():
             "path_prefix": "/notes/",
             "github_token": "",
             "timezone": "Asia/Shanghai",
+            "content_language": "zh-TW",
             "scheduler_enabled": False,
             "http_timeout": 35,
             "analyze_batch_size": 12,
@@ -101,3 +102,4 @@ def test_build_user_config_preserves_existing_secrets_when_inputs_are_blank():
     assert data["app"]["scheduler_enabled"] is False
     assert data["app"]["http_timeout"] == 35
     assert data["app"]["ai_concurrency"] == 4
+    assert data["app"]["content_language"] == "zh-TW"

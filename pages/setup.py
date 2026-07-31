@@ -8,7 +8,13 @@ from typing import Any
 import streamlit as st
 
 from ai_radar import database
-from ai_radar.config import AppConfig, get_config, reset_config, save_user_config
+from ai_radar.config import (
+    CONTENT_LANGUAGE_LABELS,
+    AppConfig,
+    get_config,
+    reset_config,
+    save_user_config,
+)
 from ai_radar.scheduler import shutdown_scheduler
 from ai_radar.setup_wizard import (
     CUSTOM_PROVIDER,
@@ -105,6 +111,7 @@ def _initialize_wizard_state(cfg: AppConfig) -> None:
         "ai_concurrency": cfg.ai_concurrency,
         "score_window_days": cfg.score_window_days,
         "max_assessment_facts": cfg.max_assessment_facts,
+        "content_language": cfg.content_language,
     }
     st.session_state.setdefault(f"{WIZARD_PREFIX}step", 0)
     st.session_state.setdefault(f"{WIZARD_PREFIX}values", defaults)
@@ -311,13 +318,20 @@ def _render_preferences_step(_cfg: AppConfig) -> None:
 
     with st.container(border=True):
         st.markdown("#### 时间与自动更新")
-        cols = st.columns([1.4, 1])
+        cols = st.columns([1.35, 1.15, 1])
         cols[0].text_input(
             "时区",
             key=_field_key("timezone"),
             help="用于定时任务和页面时间显示，例如 Asia/Shanghai。",
         )
-        cols[1].toggle(
+        cols[1].selectbox(
+            "资讯展示语言",
+            list(CONTENT_LANGUAGE_LABELS),
+            format_func=lambda value: CONTENT_LANGUAGE_LABELS[value],
+            key=_field_key("content_language"),
+            help="外文资讯会在 AI 分析时翻译成这里选择的语言。",
+        )
+        cols[2].toggle(
             "启用定时更新",
             key=_field_key("scheduler_enabled"),
             help="每天自动采集资讯、同步记忆并更新评分。",
@@ -384,6 +398,14 @@ def _render_review_step(cfg: AppConfig) -> None:
         ("分支 / 目录", f"{_state('ref')} / {_state('path_prefix') or '整个仓库'}", True),
         ("GitHub Token", "已填写" if github_ok else "未填写", github_ok),
         ("时区", _state("timezone"), True),
+        (
+            "资讯展示语言",
+            CONTENT_LANGUAGE_LABELS.get(
+                _state("content_language"),
+                _state("content_language"),
+            ),
+            True,
+        ),
         (
             "自动更新",
             "已启用" if _state_value("scheduler_enabled") else "暂不启用",
@@ -506,19 +528,27 @@ def _render_editor(cfg: AppConfig) -> None:
                 max_value=100,
                 value=cfg.max_assessment_facts,
             )
-            pref_cols = st.columns(4)
+            pref_cols = st.columns(5)
             timezone_name = pref_cols[0].text_input("时区", value=cfg.timezone)
-            scheduler_enabled = pref_cols[1].toggle(
+            content_language = pref_cols[1].selectbox(
+                "资讯展示语言",
+                list(CONTENT_LANGUAGE_LABELS),
+                index=list(CONTENT_LANGUAGE_LABELS).index(
+                    cfg.content_language
+                ),
+                format_func=lambda value: CONTENT_LANGUAGE_LABELS[value],
+            )
+            scheduler_enabled = pref_cols[2].toggle(
                 "启用定时任务",
                 value=cfg.scheduler_enabled,
             )
-            ai_concurrency = pref_cols[2].number_input(
+            ai_concurrency = pref_cols[3].number_input(
                 "AI 并发请求",
                 min_value=1,
                 max_value=8,
                 value=cfg.ai_concurrency,
             )
-            http_timeout = pref_cols[3].number_input(
+            http_timeout = pref_cols[4].number_input(
                 "HTTP 超时（秒）",
                 min_value=5,
                 max_value=300,
@@ -540,6 +570,7 @@ def _render_editor(cfg: AppConfig) -> None:
                 "path_prefix": path_prefix,
                 "github_token": github_token,
                 "timezone": timezone_name,
+                "content_language": content_language,
                 "scheduler_enabled": scheduler_enabled,
                 "http_timeout": http_timeout,
                 "analyze_batch_size": batch_size,
@@ -666,6 +697,7 @@ def _wizard_values() -> dict[str, Any]:
         "ai_concurrency",
         "score_window_days",
         "max_assessment_facts",
+        "content_language",
     )
     _sync_visible_fields()
     values = _saved_values()

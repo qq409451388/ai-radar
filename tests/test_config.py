@@ -39,6 +39,7 @@ def test_user_config_yaml_loads_secrets(tmp_path, monkeypatch):
             "app": {
                 "db_path": "data/test.db",
                 "timezone": "Asia/Shanghai",
+                "content_language": "zh-TW",
                 "scheduler_enabled": False,
                 "http_timeout": 12,
                 "analyze_batch_size": 18,
@@ -59,6 +60,7 @@ def test_user_config_yaml_loads_secrets(tmp_path, monkeypatch):
     assert cfg.profile.repo == "owner/private-memory"
     assert cfg.analyze_batch_size == 18
     assert cfg.ai_concurrency == 6
+    assert cfg.content_language == "zh-TW"
     assert cfg.is_ready is True
 
 

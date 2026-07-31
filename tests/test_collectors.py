@@ -342,3 +342,37 @@ def test_analysis_fills_missing_relevant_fields(session):
     assert cp.importance == 1
     assert cp.signal_type == "RELEASE"
     assert cp.topic_id == topic.id
+
+
+def test_analysis_persists_localized_display_copy(session):
+    source = _make_source(session, url="https://x/localized-feed")
+    item = SourceItem(
+        source_config_id=source.id,
+        external_id="localized-1",
+        title="An English release title",
+        url="https://x/localized-1",
+        raw_content="Long English release notes",
+        content_hash="localized-h1",
+        analyze_status="PENDING",
+    )
+    session.add(item)
+    session.flush()
+
+    class LocalizedLlm:
+        def extract_change_points(self, payload):
+            return ChangePointAnalysis(
+                relevant=True,
+                title="中文版本更新",
+                summary="摘要" * 200,
+                importance=3,
+            )
+
+    result = AnalysisService(session, LocalizedLlm())._analyze_one(item)  # type: ignore[arg-type]
+    cp = session.get(ChangePoint, result["change_point_id"])
+
+    assert item.title == "An English release title"
+    assert item.display_title == "中文版本更新"
+    assert item.display_language == "zh-CN"
+    assert len(item.display_summary) == 300
+    assert cp.title == item.display_title
+    assert cp.summary == item.display_summary

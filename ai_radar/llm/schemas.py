@@ -46,6 +46,16 @@ class ChangePointAnalysis(BaseModel):
     occurred_at: str | None = Field(default=None, description="ISO date YYYY-MM-DD or null")
     duplicate_keywords: list[str] = Field(default_factory=list)
 
+    @field_validator("title", mode="before")
+    @classmethod
+    def _normalize_title(cls, value):
+        return _compact_text(value, 80)
+
+    @field_validator("summary", "why_it_matters", mode="before")
+    @classmethod
+    def _normalize_display_copy(cls, value):
+        return _compact_text(value, 300)
+
     @field_validator("importance", mode="before")
     @classmethod
     def _normalize_importance(cls, value):
@@ -111,3 +121,10 @@ class CoverageAssessment(BaseModel):
                 # — the level is authoritative per section 十五.
                 return expected
         return v
+
+
+def _compact_text(value, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"

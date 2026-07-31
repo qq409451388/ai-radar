@@ -42,8 +42,16 @@ def test_signal_columns_are_added_to_existing_database(tmp_path):
     change_columns = {
         column["name"] for column in inspector.get_columns("change_point")
     }
+    item_columns = {
+        column["name"] for column in inspector.get_columns("source_item")
+    }
     assert "path_filter" in source_columns
     assert "test_status" in source_columns
     assert "last_tested_at" in source_columns
     assert "signal_type" in change_columns
     assert "followup_snoozed_until" in change_columns
+    assert {
+        "display_title",
+        "display_summary",
+        "display_language",
+    }.issubset(item_columns)

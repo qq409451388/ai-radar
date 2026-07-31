@@ -96,6 +96,15 @@ class SourceItem(Base):
     author: Mapped[str] = mapped_column(String(256), default="", server_default="")
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     raw_content: Mapped[str] = mapped_column(Text, default="", server_default="")
+    display_title: Mapped[str] = mapped_column(
+        String(512), default="", server_default=""
+    )
+    display_summary: Mapped[str] = mapped_column(
+        Text, default="", server_default=""
+    )
+    display_language: Mapped[str] = mapped_column(
+        String(16), default="", server_default=""
+    )
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     analyze_status: Mapped[str] = mapped_column(
         String(16), default="PENDING", server_default="PENDING", index=True

@@ -28,6 +28,7 @@ from ai_radar.ui import (
     signal_type_label,
     sources_for_change_point,
 )
+from ai_radar.utils import compact_text
 
 STATUS_LABEL = {
     "PENDING": "待分析",
@@ -337,7 +338,7 @@ def _render_changes(
                     '<div class="inbox-detail-divider"></div>',
                     unsafe_allow_html=True,
                 )
-                st.write(cp.summary or "暂无摘要")
+                st.write(compact_text(cp.summary or "暂无摘要", 300))
                 if cp.why_it_matters:
                     st.info(cp.why_it_matters, icon="💡")
                 st.caption(
@@ -349,7 +350,7 @@ def _render_changes(
                 if sources:
                     st.markdown(
                         " · ".join(
-                            f"[{item.title or '官方来源'}]({item.url})"
+                            f"[{item.display_title or item.title or '官方来源'}]({item.url})"
                             for item in sources[:4]
                         )
                     )
@@ -439,6 +440,8 @@ def _render_items(statuses: list[str]) -> None:
             stmt = stmt.where(
                 or_(
                     SourceItem.title.ilike(like),
+                    SourceItem.display_title.ilike(like),
+                    SourceItem.display_summary.ilike(like),
                     SourceItem.raw_content.ilike(like),
                 )
             )
@@ -508,7 +511,10 @@ def _render_items(statuses: list[str]) -> None:
                 meta += f" · 已重试 {item.retry_count} 次"
             title_col.markdown(
                 _item_heading(
-                    item.title or item.url or f"资讯 #{item.id}",
+                    item.display_title
+                    or item.title
+                    or item.url
+                    or f"资讯 #{item.id}",
                     source_name,
                     source_tone,
                     meta,
@@ -536,8 +542,12 @@ def _render_items(statuses: list[str]) -> None:
             )
             if item.url:
                 st.markdown(f"[打开官方来源]({item.url})")
-            if item.raw_content:
-                st.write(item.raw_content[:1800])
+            display_summary = (
+                item.display_summary
+                or (item.raw_content or "")[:300]
+            )
+            if display_summary:
+                st.write(display_summary[:300])
             if item.analyze_error:
                 if item.analyze_status == "FAILED":
                     st.error(item.analyze_error)
@@ -570,7 +580,7 @@ def _item_heading(
         f"<span>{escape(meta)}</span>"
         "</div>"
         '<div class="inbox-list-title">'
-        f"{escape(title)} "
+        f"{escape(compact_text(title, 80))} "
         f'<span class="inbox-source-inline {escape(source_tone)}">'
         f"· {escape(source_name)}{source_suffix}</span>"
         "</div>"

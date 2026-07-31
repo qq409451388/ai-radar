@@ -20,7 +20,7 @@ from ai_radar.llm.client import LlmClient, LlmError
 from ai_radar.models import SourceConfig, SourceItem, Topic
 from ai_radar.repositories.job_log import job_log
 from ai_radar.services.dedup_service import DedupService
-from ai_radar.utils import sha256_hex, to_utc
+from ai_radar.utils import compact_text, sha256_hex, to_utc
 
 log = logging.getLogger(__name__)
 
@@ -158,6 +158,7 @@ class AnalysisService:
         )
 
     def complete_analysis(self, item: SourceItem, analysis) -> dict:
+        self._apply_display_copy(item, analysis)
         result = self._persist_analysis(item, analysis)
         if result is None:
             item.analyze_status = ANALYZE_IGNORED
@@ -210,7 +211,9 @@ class AnalysisService:
 
     def _analyze_one(self, item: SourceItem) -> dict | None:
         """Compatibility wrapper for callers that need one synchronous item."""
-        return self._persist_analysis(item, self.request_analysis(item))
+        analysis = self.request_analysis(item)
+        self._apply_display_copy(item, analysis)
+        return self._persist_analysis(item, analysis)
 
     def _persist_analysis(self, item: SourceItem, analysis) -> dict | None:
         source = self.session.get(SourceConfig, item.source_config_id)
@@ -224,10 +227,16 @@ class AnalysisService:
 
         topic_id = self._resolve_topic_id(analysis.topic, source)
         occurred_at = _parse_date(analysis.occurred_at) or item.published_at
-        title = analysis.title.strip() or item.title.strip() or f"资讯 #{item.id}"
+        title = (
+            item.display_title.strip()
+            or analysis.title.strip()
+            or item.title.strip()
+            or f"资讯 #{item.id}"
+        )
         summary = (
-            analysis.summary.strip()
-            or (item.raw_content or "").strip()[:800]
+            item.display_summary.strip()
+            or analysis.summary.strip()
+            or (item.raw_content or "").strip()[:300]
             or title
         )
         event_key = analysis.event_key.strip()
@@ -250,6 +259,24 @@ class AnalysisService:
             duplicate_keywords=analysis.duplicate_keywords or [],
         )
         return {"change_point_id": cp.id, "event_key": cp.event_key}
+
+    def _apply_display_copy(self, item: SourceItem, analysis) -> None:
+        language = get_config().content_language
+        title = (
+            analysis.title.strip()
+            or item.display_title.strip()
+            or item.title.strip()
+            or f"资讯 #{item.id}"
+        )
+        summary = (
+            analysis.summary.strip()
+            or item.display_summary.strip()
+            or (item.raw_content or "").strip()
+            or title
+        )
+        item.display_title = compact_text(title, 80)
+        item.display_summary = compact_text(summary, 300)
+        item.display_language = language
 
     def _resolve_topic_id(self, topic_name: str, source: SourceConfig | None) -> int | None:
         if topic_name:

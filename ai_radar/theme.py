@@ -314,20 +314,6 @@ def inject_app_styles() -> None:
         [class*="st-key-source_details_"] summary:hover {
           color:var(--radar-accent);
         }
-        [class*="st-key-source_details_collecting_"] summary
-        [data-testid="stIconMaterial"] {
-          color:var(--radar-good);
-        }
-        [class*="st-key-source_details_stopped_"] summary
-        [data-testid="stIconMaterial"],
-        [class*="st-key-source_details_failed_"] summary
-        [data-testid="stIconMaterial"] {
-          color:var(--radar-bad);
-        }
-        [class*="st-key-source_details_untested_"] summary
-        [data-testid="stIconMaterial"] {
-          color:#a4aab5;
-        }
         [class*="st-key-source_details_"] [data-testid="stExpanderDetails"] {
           padding:.1rem 1rem 1rem;
           border-top:1px solid #f0f1f5;
@@ -541,6 +527,52 @@ def inject_app_styles() -> None:
         .knowledge-detail-divider {
           height:1px; margin:.72rem 0 .8rem; background:#eef0f4;
         }
+        [class*="st-key-progress_fact_card_"],
+        [class*="st-key-progress_transition_card_"] {
+          margin-bottom:.5rem;
+        }
+        [class*="st-key-progress_fact_card_"] > div,
+        [class*="st-key-progress_transition_card_"] > div {
+          padding:.78rem .88rem; border-color:var(--radar-line) !important;
+          border-radius:.86rem !important; background:rgba(255,255,255,.94);
+          box-shadow:0 1px 2px rgba(23,32,51,.02);
+          transition:border-color .16s ease, box-shadow .16s ease;
+        }
+        [class*="st-key-progress_fact_card_"] > div:hover,
+        [class*="st-key-progress_transition_card_"] > div:hover {
+          border-color:#d8dbea !important;
+          box-shadow:0 5px 16px rgba(23,32,51,.045);
+        }
+        .progress-list-heading {
+          display:flex; flex-direction:column; gap:.28rem; min-width:0;
+        }
+        .progress-list-meta {
+          display:flex; align-items:center; flex-wrap:wrap; gap:.48rem;
+          color:#8a92a2; font-size:.66rem; line-height:1.25;
+        }
+        .progress-list-title {
+          color:var(--radar-ink); font-size:.86rem; line-height:1.5;
+          font-weight:720; letter-spacing:-.012em;
+          overflow-wrap:anywhere; text-wrap:pretty;
+        }
+        .progress-evidence,
+        .progress-coverage {
+          display:inline-flex; align-items:center; min-height:1.25rem;
+          padding:.12rem .42rem; border-radius:99px;
+          color:#667085; background:#eef0f4; font-weight:720;
+        }
+        .progress-evidence.research { color:#3564b5; background:#edf3ff; }
+        .progress-evidence.design { color:#7156c8; background:#f0edff; }
+        .progress-evidence.practice { color:#16856b; background:#e6f6f0; }
+        .progress-evidence.production { color:#08735d; background:#dff4ec; }
+        .progress-evidence.decision { color:#986710; background:#fff3dc; }
+        .progress-coverage.none { color:var(--radar-bad); background:#fdeaea; }
+        .progress-coverage.aware { color:#986710; background:#fff3dc; }
+        .progress-coverage.understood { color:#3564b5; background:#edf3ff; }
+        .progress-coverage.practiced { color:var(--radar-good); background:#e6f6f0; }
+        .progress-detail-divider {
+          height:1px; margin:.72rem 0 .8rem; background:#eef0f4;
+        }
         .signal-group-intro {
           color:var(--radar-muted); background:var(--radar-soft);
           border-left:3px solid var(--radar-accent); border-radius:.45rem;
@@ -634,6 +666,7 @@ def inject_app_styles() -> None:
           }
           .knowledge-brief { gap:.35rem .8rem; }
           .knowledge-list-title { font-size:.8rem; }
+          .progress-list-title { font-size:.8rem; }
         }
         </style>
         """,

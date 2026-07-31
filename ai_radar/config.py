@@ -19,6 +19,12 @@ from dotenv import dotenv_values
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_TEMPLATE_PATH = PROJECT_ROOT / "config" / "app.example.yaml"
 LEGACY_ENV_PATH = PROJECT_ROOT / ".env"
+CONTENT_LANGUAGE_LABELS = {
+    "zh-CN": "简体中文",
+    "zh-TW": "繁體中文",
+    "en": "English",
+    "ja": "日本語",
+}
 
 
 def user_config_dir() -> Path:
@@ -80,6 +86,7 @@ class AppConfig:
         ai_concurrency: int = 4,
         score_window_days: int = 90,
         max_assessment_facts: int = 24,
+        content_language: str = "zh-CN",
         project_root: Path = PROJECT_ROOT,
         config_path: Path | None = None,
         config_exists: bool = False,
@@ -96,6 +103,11 @@ class AppConfig:
         self.ai_concurrency = max(1, min(8, ai_concurrency))
         self.score_window_days = score_window_days
         self.max_assessment_facts = max_assessment_facts
+        self.content_language = (
+            content_language
+            if content_language in CONTENT_LANGUAGE_LABELS
+            else "zh-CN"
+        )
         self.project_root = project_root
         self.config_path = config_path or user_config_path()
         self.config_exists = config_exists
@@ -210,6 +222,13 @@ class AppConfig:
                     24,
                 )
             ),
+            content_language=str(
+                value(
+                    "app.content_language",
+                    "AI_RADAR_CONTENT_LANGUAGE",
+                    "zh-CN",
+                )
+            ).strip(),
             config_path=path,
             config_exists=path.exists(),
             legacy_env_detected=bool(legacy) and not path.exists(),
@@ -268,6 +287,7 @@ class AppConfig:
                 "ai_concurrency": self.ai_concurrency,
                 "score_window_days": self.score_window_days,
                 "max_assessment_facts": self.max_assessment_facts,
+                "content_language": self.content_language,
             },
         }
 
