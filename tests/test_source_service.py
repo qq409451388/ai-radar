@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from sqlalchemy import func, select
+from streamlit.testing.v1 import AppTest
 
 from ai_radar.models import (
     ChangePoint,
@@ -136,3 +137,40 @@ def test_deleting_source_cleans_items_but_keeps_knowledge(session):
     assert session.scalar(select(func.count(SourceItem.id))) == 0
     assert session.scalar(select(func.count(ChangePointSource.id))) == 0
     assert session.scalar(select(func.count(ChangePoint.id))) == 1
+
+
+def test_sources_page_visibly_marks_default_communities(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("AI_RADAR_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("AI_RADAR_DB_PATH", str(tmp_path / "radar.db"))
+    monkeypatch.setenv("AI_RADAR_SCHEDULER_ENABLED", "false")
+
+    from ai_radar import database
+    from ai_radar.bootstrap import seed_default_data
+    from ai_radar.config import reset_config
+    from ai_radar.database import session_scope
+
+    reset_config()
+    database.reset_engine()
+    database.init_db()
+    try:
+        with session_scope() as app_session:
+            seed_default_data(app_session)
+
+        app = AppTest.from_file("pages/sources.py", default_timeout=10).run()
+
+        assert not app.exception
+        labels = [item.label for item in app.expander]
+        assert any(
+            "LINUX DO" in label and "社区讨论" in label
+            for label in labels
+        )
+        assert any(
+            "稀土掘金" in label and "社区讨论" in label
+            for label in labels
+        )
+    finally:
+        reset_config()
+        database.reset_engine()

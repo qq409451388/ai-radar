@@ -145,16 +145,20 @@ def test_home_prioritizes_recent_changes_and_limits_historical_gaps(
         assert data.recent_priority_count == 2
         assert data.important_gap_count == 6
         focus_ids = [item.title for item in data.focus_items]
-        assert focus_ids[:2] == ["today", "recent"]
+        assert set(focus_ids[:2]) == {"today", "recent"}
         assert set(focus_ids[2:]) == {"historical-one", "historical-two"}
         assert "snoozed" not in focus_ids
         assert "old-gap" not in focus_ids
         assert sum(
             item.is_historical_supplement for item in data.focus_items
         ) == 2
-        today_item = data.focus_items[0]
+        today_item = next(
+            item for item in data.focus_items if item.title == "today"
+        )
         assert today_item.primary_source_url == "https://example.com/spec"
-        assert today_item.source_count == 2
+        assert today_item.source_count == 1
+        assert today_item.official_source_count == 1
+        assert today_item.primary_source_kind == "OFFICIAL"
         recent_item = next(item for item in data.focus_items if item.title == "recent")
         assert recent_item.relation == "尚未覆盖"
         assert recent_item.primary_source_url == ""

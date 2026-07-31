@@ -65,6 +65,7 @@ class LlmClient:
         prompt = prompts.render_analyze(
             source_name=item_payload["source_name"],
             source_type=item_payload.get("source_type", ""),
+            source_kind=item_payload.get("source_kind", "官方来源"),
             title=item_payload["title"],
             url=item_payload["url"],
             published_at=item_payload["published_at"],

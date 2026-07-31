@@ -6,6 +6,7 @@ from html import escape
 import streamlit as st
 
 from ai_radar import orchestrator
+from ai_radar.bootstrap import SOURCE_KIND_COMMUNITY
 from ai_radar.database import session_scope
 from ai_radar.pipeline_runner import (
     enqueue_pipeline,
@@ -161,7 +162,11 @@ def _render_focus_item(item) -> None:
         )
         if item.primary_source_url:
             action_columns[1].link_button(
-                "官方来源",
+                (
+                    "社区讨论"
+                    if item.primary_source_kind == SOURCE_KIND_COMMUNITY
+                    else "官方来源"
+                ),
                 item.primary_source_url,
                 width="stretch",
             )

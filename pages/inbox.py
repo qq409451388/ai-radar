@@ -9,7 +9,11 @@ import streamlit as st
 from sqlalchemy import func, or_, select
 
 from ai_radar import orchestrator
-from ai_radar.bootstrap import DESIGN_SIGNAL_TYPES
+from ai_radar.bootstrap import (
+    DESIGN_SIGNAL_TYPES,
+    SOURCE_TYPE_COMMUNITY,
+    source_kind_label,
+)
 from ai_radar.config import get_config
 from ai_radar.database import session_scope
 from ai_radar.models import (
@@ -41,6 +45,7 @@ SOURCE_TONE = {
     "WEB_PAGE": "web",
     "GITHUB_RELEASE": "release",
     "GITHUB_COMMIT": "commit",
+    "COMMUNITY": "community",
 }
 PAGE_SIZE = 20
 
@@ -245,7 +250,10 @@ def _render_changes(
             source_options,
             format_func=lambda value: "全部资讯源"
             if value is None
-            else source_names[value],
+            else (
+                f"{source_kind_label(source_types[value])} · "
+                f"{source_names[value]}"
+            ),
             key=f"inbox_change_source_{view_key}",
         )
         selected_signals = st.multiselect(
@@ -321,7 +329,7 @@ def _render_changes(
             cov = latest_coverage(session, cp.id)
             level = cov.coverage_level if cov else "NONE"
             sources = sources_for_change_point(session, cp.id)
-            source_name, source_tone, extra_sources = _primary_source(
+            source_name, source_tone, source_kind, extra_sources = _primary_source(
                 sources,
                 source_names,
                 source_types,
@@ -349,6 +357,7 @@ def _render_changes(
                         status_class=(
                             "priority" if cp.importance >= 5 else "processed"
                         ),
+                        source_kind=source_kind,
                         extra_sources=extra_sources,
                     ),
                     unsafe_allow_html=True,
@@ -377,12 +386,31 @@ def _render_changes(
                     f"与你的关系：{level} · "
                     f"建议下一步：{signal_action_hint(cp.signal_type)}"
                 )
-                if len(sources) >= 2:
-                    st.success(f"已有 {len(sources)} 个来源共同确认这个变化。")
+                source_config_ids = {
+                    item.source_config_id for item in sources
+                }
+                official_count = sum(
+                    1
+                    for source_id in source_config_ids
+                    if source_types.get(source_id) != SOURCE_TYPE_COMMUNITY
+                )
+                community_count = len(source_config_ids) - official_count
+                if official_count >= 2:
+                    st.success(
+                        f"已有 {official_count} 个官方来源共同确认这个变化。"
+                    )
+                elif official_count and community_count:
+                    st.info(
+                        f"已有官方信息，并有 {community_count} 个社区来源参与讨论。"
+                    )
+                elif community_count:
+                    st.warning(
+                        f"来自 {community_count} 个社区讨论源，仍需官方信息确认。"
+                    )
                 if sources:
                     st.markdown(
                         " · ".join(
-                            f"[{item.display_title or item.title or '官方来源'}]({item.url})"
+                            f"[{item.display_title or item.title or '查看来源'}]({item.url})"
                             for item in sources[:4]
                         )
                     )
@@ -461,7 +489,10 @@ def _render_items(
             source_options,
             format_func=lambda value: "全部来源"
             if value is None
-            else source_names[value],
+            else (
+                f"{source_kind_label(source_types[value])} · "
+                f"{source_names[value]}"
+            ),
             key=f"inbox_source_{view_key}",
         )
         keyword = filter_cols[1].text_input(
@@ -537,8 +568,9 @@ def _render_items(
 
     for item in items:
         source_name = source_names.get(item.source_config_id, "未知来源")
+        source_type = source_types.get(item.source_config_id, "")
         source_tone = SOURCE_TONE.get(
-            source_types.get(item.source_config_id, ""),
+            source_type,
             "neutral",
         )
         is_open = st.session_state.get("_inbox_open_item_id") == item.id
@@ -564,6 +596,7 @@ def _render_items(
                     meta,
                     status_text=STATUS_LABEL[item.analyze_status],
                     status_class=_status_class(item.analyze_status),
+                    source_kind=source_kind_label(source_type),
                 ),
                 unsafe_allow_html=True,
             )
@@ -585,7 +618,7 @@ def _render_items(
                 unsafe_allow_html=True,
             )
             if item.url:
-                st.markdown(f"[打开官方来源]({item.url})")
+                st.markdown(f"[打开来源]({item.url})")
             display_summary = (
                 item.display_summary
                 or (item.raw_content or "")[:300]
@@ -613,6 +646,7 @@ def _item_heading(
     *,
     status_text: str,
     status_class: str,
+    source_kind: str,
     extra_sources: int = 0,
 ) -> str:
     source_suffix = f" +{extra_sources}" if extra_sources else ""
@@ -625,6 +659,8 @@ def _item_heading(
         "</div>"
         '<div class="inbox-list-title">'
         f"{escape(compact_text(title, 80))} "
+        f'<span class="inbox-source-kind {"community" if source_kind == "社区讨论" else "official"}">'
+        f"{escape(source_kind)}</span>"
         f'<span class="inbox-source-inline {escape(source_tone)}">'
         f"· {escape(source_name)}{source_suffix}</span>"
         "</div>"
@@ -636,16 +672,18 @@ def _primary_source(
     items: list[SourceItem],
     source_names: dict[int, str],
     source_types: dict[int, str],
-) -> tuple[str, str, int]:
+) -> tuple[str, str, str, int]:
     source_ids = list(
         dict.fromkeys(item.source_config_id for item in items)
     )
     if not source_ids:
-        return "来源待补充", "neutral", 0
+        return "来源待补充", "neutral", "来源未知", 0
     source_id = source_ids[0]
+    source_type = source_types.get(source_id, "")
     return (
         source_names.get(source_id, "未知来源"),
-        SOURCE_TONE.get(source_types.get(source_id, ""), "neutral"),
+        SOURCE_TONE.get(source_type, "neutral"),
+        source_kind_label(source_type),
         max(0, len(source_ids) - 1),
     )
 

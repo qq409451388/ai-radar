@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ai_radar.config import PROJECT_ROOT
+from ai_radar.collectors.community import community_platform_key
 from ai_radar.models import (
     SourceConfig,
     Topic,
@@ -51,6 +52,22 @@ SOURCE_TYPE_RSS = "RSS"
 SOURCE_TYPE_WEB_PAGE = "WEB_PAGE"
 SOURCE_TYPE_GITHUB_RELEASE = "GITHUB_RELEASE"
 SOURCE_TYPE_GITHUB_COMMIT = "GITHUB_COMMIT"
+SOURCE_TYPE_COMMUNITY = "COMMUNITY"
+
+SOURCE_KIND_OFFICIAL = "OFFICIAL"
+SOURCE_KIND_COMMUNITY = "COMMUNITY"
+
+
+def source_kind(source_type: str) -> str:
+    return (
+        SOURCE_KIND_COMMUNITY
+        if source_type == SOURCE_TYPE_COMMUNITY
+        else SOURCE_KIND_OFFICIAL
+    )
+
+
+def source_kind_label(source_type: str) -> str:
+    return "社区讨论" if source_kind(source_type) == SOURCE_KIND_COMMUNITY else "官方来源"
 
 # ----- Intelligence signal types -----
 SIGNAL_RELEASE = "RELEASE"
@@ -142,8 +159,9 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
         created["topics"] += 1
 
     # ----- RSS sources -----
+    existing_sources = list(session.execute(select(SourceConfig)).scalars())
     existing_source_keys = {
-        (row.source_type, row.url) for row in session.execute(select(SourceConfig)).scalars()
+        (row.source_type, row.url) for row in existing_sources
     }
 
     def _resolve_topic_id(name: str) -> int | None:
@@ -190,6 +208,54 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
                 default_topic_id=topic_id,
             )
         )
+        existing_source_keys.add(key)
+        created["sources"] += 1
+
+    # ----- Developer community discussions -----
+    for community in data.get("community_sources", []):
+        platform_key = community_platform_key(community["url"])
+        existing = next(
+            (
+                source
+                for source in existing_sources
+                if platform_key
+                and community_platform_key(source.url) == platform_key
+            ),
+            None,
+        )
+        if existing is not None:
+            # Migrate old RSS/web configurations such as juejin.cn/ai to the
+            # dedicated adapter. A new test is required because the connection
+            # method changed.
+            if existing.source_type != SOURCE_TYPE_COMMUNITY:
+                existing_source_keys.discard(
+                    (existing.source_type, existing.url)
+                )
+                existing.source_type = SOURCE_TYPE_COMMUNITY
+                existing.enabled = False
+                existing.test_status = "UNTESTED"
+                existing.last_tested_at = None
+                existing.last_error = ""
+                existing_source_keys.add(
+                    (existing.source_type, existing.url)
+                )
+            continue
+        key = (SOURCE_TYPE_COMMUNITY, community["url"])
+        if key in existing_source_keys:
+            continue
+        topic_id = _resolve_topic_id(community.get("default_topic", ""))
+        source = SourceConfig(
+            name=community["name"],
+            source_type=SOURCE_TYPE_COMMUNITY,
+            url=community["url"],
+            repository="",
+            path_filter="",
+            enabled=False,
+            test_status="UNTESTED",
+            default_topic_id=topic_id,
+        )
+        session.add(source)
+        existing_sources.append(source)
         existing_source_keys.add(key)
         created["sources"] += 1
 

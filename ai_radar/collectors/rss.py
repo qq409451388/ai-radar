@@ -27,7 +27,12 @@ class RSSCollector:
         try:
             parsed = feedparser.parse(
                 self.url,
-                request_headers={"User-Agent": "ai-radar/0.1 (+https://github.com)"},
+                request_headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (compatible; AI-Radar/0.1; "
+                        "+https://github.com/qq409451388/ai-radar)"
+                    )
+                },
             )
         except Exception as exc:  # pragma: no cover - network specific
             log.warning("RSSCollector[%s] parse error: %s", self.name, exc)

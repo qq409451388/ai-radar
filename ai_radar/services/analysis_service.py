@@ -14,6 +14,7 @@ from ai_radar.bootstrap import (
     ANALYZE_PENDING,
     ANALYZE_SUCCESS,
     VALID_IMPORTANCE,
+    source_kind_label,
 )
 from ai_radar.config import get_config
 from ai_radar.llm.client import LlmClient, LlmError
@@ -138,6 +139,9 @@ class AnalysisService:
             {
                 "source_name": source_name,
                 "source_type": source.source_type if source else "",
+                "source_kind": source_kind_label(
+                    source.source_type if source else ""
+                ),
                 "title": item.title,
                 "url": item.url,
                 "published_at": published,

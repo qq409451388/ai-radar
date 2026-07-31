@@ -68,6 +68,7 @@ def test_analysis_prompt_requires_the_configured_display_language():
     prompt = render_analyze(
         source_name="OpenAI",
         source_type="RSS",
+        source_kind="官方来源",
         title="English title",
         url="https://example.com",
         published_at="2026-07-31",
@@ -77,3 +78,5 @@ def test_analysis_prompt_requires_the_configured_display_language():
 
     assert "title、summary、why_it_matters 都必须使用简体中文" in prompt
     assert "最多 300 个字符" in prompt
+    assert "来源属性：官方来源" in prompt
+    assert "社区讨论”只能作为早期线索" in prompt

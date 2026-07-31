@@ -1,6 +1,7 @@
 # Default AI information sources.
-# Only official blogs / announcements / official GitHub repositories.
-# Sources that may not have a stable RSS feed are kept disabled by default.
+# Official sources and high-signal developer communities.
+# Community sources are clearly marked and require a connection test before
+# the user enables them.
 
 rss_sources:
   - name: OpenAI Blog
@@ -36,6 +37,27 @@ web_page_sources:
     path_filter: /engineering/
     default_topic: Agent 架构与编排
     enabled: true
+
+community_sources:
+  - name: LINUX DO
+    url: https://linux.do/
+    enabled: false
+
+  - name: V2EX
+    url: https://www.v2ex.com/
+    enabled: false
+
+  - name: 开源中国 OSCHINA
+    url: https://www.oschina.net/
+    enabled: false
+
+  - name: InfoQ 中文
+    url: https://www.infoq.cn/
+    enabled: false
+
+  - name: 稀土掘金
+    url: https://juejin.cn/
+    enabled: false
 
 github_release_sources:
   - name: OpenAI Codex

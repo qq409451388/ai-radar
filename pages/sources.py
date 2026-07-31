@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ai_radar import orchestrator
+from ai_radar.bootstrap import source_kind_label
 from ai_radar.database import session_scope
 from ai_radar.models import SourceConfig, Topic
 from ai_radar.services.source_service import SourceService, source_display_state
@@ -19,6 +20,7 @@ TYPE_LABELS = {
     "WEB_PAGE": "网页",
     "GITHUB_RELEASE": "GitHub 版本",
     "GITHUB_COMMIT": "GitHub 文档变更",
+    "COMMUNITY": "社区讨论（自动识别）",
 }
 TEST_LABELS = {
     "PASSED": ("连接正常", "success"),
@@ -79,6 +81,11 @@ def _render_add_source() -> None:
                 format_func=lambda value: TYPE_LABELS[value],
             )
             url = st.text_input("URL", placeholder="https://...")
+            if source_type == "COMMUNITY":
+                st.caption(
+                    "当前支持 LINUX DO、V2EX、OSCHINA、InfoQ 中文和稀土掘金，"
+                    "填写站点首页即可。"
+                )
             github_cols = st.columns(2)
             repository = github_cols[0].text_input(
                 "GitHub 仓库（可选）",
@@ -88,6 +95,7 @@ def _render_add_source() -> None:
             path_filter = github_cols[1].text_input(
                 "只关注这些路径（可选）",
                 placeholder="docs/ 或 /engineering/",
+                disabled=source_type == "COMMUNITY",
             )
             topic_id = st.selectbox(
                 "归入领域",
@@ -196,8 +204,10 @@ def _render_sources() -> None:
         collection_status, state_icon, state_class = source_display_state(
             source
         )
+        kind_label = source_kind_label(source.source_type)
         summary = (
             f"{state_icon}　{source.name}　·　"
+            f"{kind_label}　·　"
             f"{TYPE_LABELS.get(source.source_type, source.source_type)}　·　"
             f"{topic_names.get(source.default_topic_id, '自动分配')}　·　"
             f"{collection_status}"
@@ -210,6 +220,9 @@ def _render_sources() -> None:
         ):
             st.markdown(
                 '<div class="source-detail-meta">'
+                "<div><span>来源属性</span>"
+                f'<strong class="source-kind-{source.source_type.casefold()}">'
+                f"{escape(kind_label)}</strong></div>"
                 "<div><span>连接状态</span>"
                 f'<strong class="{status_class}">{escape(status_text)}</strong></div>'
                 "<div><span>最近测试</span>"
@@ -358,7 +371,12 @@ def _render_edit_source(
             path_filter = config_cols[1].text_input(
                 "只关注这些路径（可选）",
                 value=source.path_filter or "",
+                disabled=source_type == "COMMUNITY",
             )
+            if source_type == "COMMUNITY":
+                st.caption(
+                    "社区来源会作为讨论信号处理，不作为官方事实确认。"
+                )
             topic_options = [None, *[topic.id for topic in topics]]
             topic_index = (
                 topic_options.index(source.default_topic_id)

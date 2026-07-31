@@ -9,6 +9,7 @@ import streamlit as st
 from sqlalchemy import or_, select
 
 from ai_radar import orchestrator
+from ai_radar.bootstrap import source_kind_label
 from ai_radar.database import session_scope
 from ai_radar.models import (
     ChangePoint,
@@ -99,6 +100,9 @@ def render() -> None:
             ).scalars()
         )
         source_names = {source.id: source.name for source in sources}
+        source_types = {
+            source.id: source.source_type for source in sources
+        }
 
         topic_options = [None] + [topic.id for topic in topics]
         source_options = [None] + [source.id for source in sources]
@@ -159,7 +163,10 @@ def render() -> None:
             source_options,
             format_func=lambda value: "全部资讯源"
             if value is None
-            else source_names[value],
+            else (
+                f"{source_kind_label(source_types[value])} · "
+                f"{source_names[value]}"
+            ),
             key="knowledge_source",
         )
         selected_level = primary_filters[2].selectbox(
@@ -485,7 +492,7 @@ def _render_change_point(
             st.info(cp.why_it_matters, icon="💡")
 
         evidence_tab, history_tab, source_tab, manage_tab = st.tabs(
-            ["当前判断", "进展历史", "官方来源", "管理"]
+            ["当前判断", "进展历史", "关联来源", "管理"]
         )
         with evidence_tab:
             if cov is None:
@@ -545,8 +552,13 @@ def _render_change_point(
         with source_tab:
             sources = sources_for_change_point(session, cp.id)
             for item in sources:
+                source = session.get(SourceConfig, item.source_config_id)
+                kind_label = source_kind_label(
+                    source.source_type if source else ""
+                )
                 st.markdown(
-                    f"- [{item.display_title or item.title or item.url}]({item.url})"
+                    f"- **{kind_label}** · "
+                    f"[{item.display_title or item.title or item.url}]({item.url})"
                 )
                 st.caption(
                     f"发布 {fmt_dt(item.published_at)} · {item.author or '官方'}"

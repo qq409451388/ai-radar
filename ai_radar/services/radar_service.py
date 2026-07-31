@@ -7,13 +7,19 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from ai_radar.bootstrap import STATUS_ACTIVE
+from ai_radar.bootstrap import (
+    SOURCE_KIND_COMMUNITY,
+    SOURCE_TYPE_COMMUNITY,
+    STATUS_ACTIVE,
+    source_kind,
+)
 from ai_radar.config import get_config
 from ai_radar.models import (
     ChangePoint,
     ChangePointSource,
     KnowledgeCoverage,
     PipelineRun,
+    SourceConfig,
     SourceItem,
     Topic,
     TopicSnapshot,
@@ -56,8 +62,10 @@ class FocusItem:
     coverage_level: str | None
     first_seen_at: datetime
     source_count: int
+    official_source_count: int
     primary_source_url: str
     primary_source_title: str
+    primary_source_kind: str
     priority_score: int
     is_today: bool
     is_recent: bool
@@ -230,8 +238,40 @@ class RadarService:
         historical: bool = False,
     ) -> FocusItem:
         level = coverage.coverage_level if coverage else None
-        source_count = len(sources)
-        primary = next((source for source in sources if source.url), None)
+        source_configs = {
+            item.source_config_id: self.session.get(
+                SourceConfig,
+                item.source_config_id,
+            )
+            for item in sources
+        }
+        source_count = len(source_configs)
+        official_source_count = sum(
+            1
+            for config in source_configs.values()
+            if config is not None
+            and config.source_type != SOURCE_TYPE_COMMUNITY
+        )
+        primary = next(
+            (
+                item
+                for item in sources
+                if item.url
+                and (
+                    config := source_configs.get(item.source_config_id)
+                ) is not None
+                and config.source_type != SOURCE_TYPE_COMMUNITY
+            ),
+            None,
+        ) or next((item for item in sources if item.url), None)
+        primary_config = (
+            source_configs.get(primary.source_config_id)
+            if primary
+            else None
+        )
+        primary_kind = source_kind(
+            primary_config.source_type if primary_config else ""
+        )
         return FocusItem(
             change_point_id=cp.id,
             title=cp.title,
@@ -244,16 +284,24 @@ class RadarService:
             coverage_level=level,
             first_seen_at=cp.first_seen_at,
             source_count=source_count,
+            official_source_count=official_source_count,
             primary_source_url=primary.url if primary else "",
             primary_source_title=(
-                primary.display_title or primary.title or "打开官方来源"
+                primary.display_title
+                or primary.title
+                or (
+                    "打开社区讨论"
+                    if primary_kind == SOURCE_KIND_COMMUNITY
+                    else "打开官方来源"
+                )
             )
             if primary
             else "",
+            primary_source_kind=primary_kind,
             priority_score=_priority_score(
                 cp,
                 level,
-                source_count,
+                official_source_count,
                 self.now,
             ),
             is_today=self.today_start
@@ -393,7 +441,7 @@ class RadarService:
 def _priority_score(
     cp: ChangePoint,
     coverage_level: str | None,
-    source_count: int,
+    official_source_count: int,
     now: datetime,
 ) -> int:
     age = now - _as_utc(cp.first_seen_at)
@@ -405,7 +453,13 @@ def _priority_score(
         freshness = 3
     else:
         freshness = 0
-    confirmation = 8 if source_count >= 3 else 5 if source_count >= 2 else 0
+    confirmation = (
+        8
+        if official_source_count >= 3
+        else 5
+        if official_source_count >= 2
+        else 0
+    )
     return (
         IMPORTANCE_SCORE.get(cp.importance, 0)
         + SIGNAL_SCORE.get(cp.signal_type, 0)

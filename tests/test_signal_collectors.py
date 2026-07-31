@@ -4,8 +4,14 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from ai_radar.bootstrap import load_default_sources_yaml
+from ai_radar.bootstrap import (
+    SOURCE_TYPE_COMMUNITY,
+    load_default_sources_yaml,
+    seed_default_data,
+)
+from ai_radar.collectors.community import community_feed_url
 from ai_radar.collectors.github_commit import GitHubCommitCollector
+from ai_radar.collectors.juejin import JuejinCollector
 from ai_radar.collectors.web_page import (
     WebPageCollector,
     _article_links,
@@ -52,6 +58,107 @@ def test_design_sources_are_seeded_with_filters(seeded_session):
     assert sources["Agent Skills Specification"].source_type == "GITHUB_COMMIT"
     assert sources["Agent Skills Specification"].path_filter == "spec"
     assert sources["MCP Specification"].path_filter == "schema"
+
+
+def test_default_developer_communities_are_seeded_as_unverified_discussions(
+    seeded_session,
+):
+    sources = {
+        source.name: source
+        for source in seeded_session.execute(select(SourceConfig)).scalars()
+    }
+
+    expected = {
+        "LINUX DO",
+        "V2EX",
+        "开源中国 OSCHINA",
+        "InfoQ 中文",
+        "稀土掘金",
+    }
+    assert expected.issubset(sources)
+    for name in expected:
+        assert sources[name].source_type == SOURCE_TYPE_COMMUNITY
+        assert sources[name].enabled is False
+        assert sources[name].test_status == "UNTESTED"
+
+
+def test_existing_juejin_page_is_migrated_to_community_adapter(session):
+    old_source = SourceConfig(
+        name="掘金AI",
+        source_type="RSS",
+        url="https://juejin.cn/ai",
+        enabled=True,
+        test_status="PASSED",
+    )
+    session.add(old_source)
+    session.flush()
+
+    seed_default_data(session)
+
+    assert old_source.source_type == SOURCE_TYPE_COMMUNITY
+    assert old_source.enabled is False
+    assert old_source.test_status == "UNTESTED"
+
+
+def test_supported_community_pages_resolve_to_collection_feeds():
+    assert community_feed_url("https://linux.do/") == (
+        "https://linux.do/latest.rss"
+    )
+    assert community_feed_url("https://www.v2ex.com/") == (
+        "https://www.v2ex.com/index.xml"
+    )
+    assert community_feed_url("https://www.oschina.net/") == (
+        "https://www.oschina.net/news/rss"
+    )
+    assert community_feed_url("https://www.infoq.cn/") == (
+        "https://rsshub.rssforever.com/infoq/recommend"
+    )
+
+
+def test_juejin_collector_uses_ai_category_api(monkeypatch):
+    payload = {
+        "err_no": 0,
+        "data": [
+            {
+                "article_id": "123",
+                "article_info": {
+                    "article_id": "123",
+                    "title": "Codex 实战",
+                    "brief_content": "一篇社区工具实测。",
+                    "rtime": "1785480000",
+                },
+                "author_user_info": {"user_name": "测试作者"},
+            }
+        ],
+    }
+
+    class _Client:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def post(self, url: str, *, json: dict):
+            assert "recommend_cate_feed" in url
+            assert json["cate_id"] == "6809637773935378440"
+            return _Response(data=payload)
+
+    monkeypatch.setattr(
+        "ai_radar.collectors.juejin.httpx.Client",
+        _Client,
+    )
+    items = list(JuejinCollector("稀土掘金").collect())
+
+    assert len(items) == 1
+    assert items[0].external_id == "123"
+    assert items[0].title == "Codex 实战"
+    assert items[0].url == "https://juejin.cn/post/123"
+    assert items[0].author == "测试作者"
+    assert items[0].content == "一篇社区工具实测。"
 
 
 def test_web_page_parser_discovers_only_matching_same_host_articles():

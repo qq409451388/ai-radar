@@ -12,11 +12,13 @@ from sqlalchemy.orm import Session
 from ai_radar.bootstrap import (
     SOURCE_TYPE_GITHUB_COMMIT,
     SOURCE_TYPE_GITHUB_RELEASE,
+    SOURCE_TYPE_COMMUNITY,
     SOURCE_TYPE_RSS,
     SOURCE_TYPE_WEB_PAGE,
 )
 from ai_radar.collectors.github_commit import GitHubCommitCollector
 from ai_radar.collectors.github_release import GitHubReleaseCollector
+from ai_radar.collectors.community import CommunityCollector
 from ai_radar.collectors.rss import RSSCollector
 from ai_radar.collectors.web_page import WebPageCollector
 from ai_radar.models import SourceConfig, SourceItem
@@ -24,6 +26,15 @@ from ai_radar.repositories.job_log import job_log
 from ai_radar.utils import sha256_hex
 
 log = logging.getLogger(__name__)
+
+BLOCKED_PAGE_MARKERS = (
+    "please wait",
+    "just a moment",
+    "enable javascript",
+    "checking your browser",
+    "访问验证",
+    "安全验证",
+)
 
 
 class CollectionService:
@@ -109,13 +120,42 @@ class CollectionService:
         try:
             collector = self._collector_for(cfg)
             preview = list(islice(collector.collect(), 3))
+            if not preview:
+                return {
+                    "source_config_id": cfg.id,
+                    "source": cfg.name,
+                    "status": "FAILED",
+                    "items_seen": 0,
+                    "sample_titles": [],
+                    "error": (
+                        "未读取到任何文章。请确认来源类型与地址匹配："
+                        "RSS 类型必须填写订阅地址，动态网页可能需要专用采集方式。"
+                    ),
+                }
+            usable_preview = [
+                item for item in preview if _is_usable_preview_item(item)
+            ]
+            if not usable_preview:
+                return {
+                    "source_config_id": cfg.id,
+                    "source": cfg.name,
+                    "status": "FAILED",
+                    "items_seen": 0,
+                    "sample_titles": [],
+                    "error": (
+                        "来源可以访问，但读取到的是空内容、验证页面或占位页面，"
+                        "尚不能用于采集文章。"
+                    ),
+                }
             return {
                 "source_config_id": cfg.id,
                 "source": cfg.name,
                 "status": "PASSED",
-                "items_seen": len(preview),
+                "items_seen": len(usable_preview),
                 "sample_titles": [
-                    item.title for item in preview if getattr(item, "title", "")
+                    item.title
+                    for item in usable_preview
+                    if getattr(item, "title", "")
                 ],
             }
         except Exception as exc:
@@ -162,6 +202,8 @@ class CollectionService:
     def _collector_for(self, cfg: SourceConfig):
         if cfg.source_type == SOURCE_TYPE_RSS:
             return RSSCollector(cfg.name, cfg.url)
+        elif cfg.source_type == SOURCE_TYPE_COMMUNITY:
+            return CommunityCollector(cfg.name, cfg.url)
         elif cfg.source_type == SOURCE_TYPE_WEB_PAGE:
             return WebPageCollector(cfg.name, cfg.url, cfg.path_filter)
         elif cfg.source_type == SOURCE_TYPE_GITHUB_RELEASE:
@@ -219,6 +261,17 @@ class CollectionService:
         self.session.add(new_item)
         self.session.flush()
         return True
+
+
+def _is_usable_preview_item(item) -> bool:
+    external_id = str(getattr(item, "external_id", "") or "").strip()
+    title = str(getattr(item, "title", "") or "").strip()
+    url = str(getattr(item, "url", "") or "").strip()
+    content = str(getattr(item, "content", "") or "").strip()
+    text = f"{title}\n{content}".casefold()
+    if any(marker in text for marker in BLOCKED_PAGE_MARKERS):
+        return False
+    return bool(external_id and title and (url or content))
 
 
 def _repo_from_url(url: str) -> str:

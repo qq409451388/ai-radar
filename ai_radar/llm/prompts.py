@@ -50,6 +50,11 @@ ANALYZE_PROMPT = dedent(
     - summary 必须脱离原文也能看懂发生了什么，只保留一段，最多 300 个字符。
     - 即使 relevant=false，也要尽量返回翻译后的 title 和 300 字内 summary，方便归档页展示。
 
+    来源可信度规则：
+    - “官方来源”可以作为该组织自身发布、版本或规范变化的直接证据。
+    - “社区讨论”只能作为早期线索和使用反馈，不能表述为已经得到官方确认。
+    - 社区热度本身不提高 importance；如果缺少官方证据，应在 why_it_matters 中提示需要核实。
+
     严格只输出以下 JSON（不要 markdown 代码块，不要多余字段）：
     {{
       "relevant": true,
@@ -67,6 +72,7 @@ ANALYZE_PROMPT = dedent(
     ---
     资讯来源：{source_name}
     来源类型：{source_type}
+    来源属性：{source_kind}
     标题：{title}
     链接：{url}
     发布时间：{published_at}
@@ -159,12 +165,14 @@ def render_analyze(
     published_at: str,
     content: str,
     output_language: str,
+    source_kind: str = "官方来源",
 ) -> str:
     return ANALYZE_PROMPT.format(
         topics=TOPICS_BLOCK,
         output_language=output_language,
         source_name=source_name,
         source_type=source_type,
+        source_kind=source_kind,
         title=title,
         url=url,
         published_at=published_at,

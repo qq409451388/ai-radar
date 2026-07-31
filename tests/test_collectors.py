@@ -10,10 +10,12 @@ from sqlalchemy import select
 from ai_radar.bootstrap import (
     SOURCE_TYPE_GITHUB_COMMIT,
     SOURCE_TYPE_GITHUB_RELEASE,
+    SOURCE_TYPE_COMMUNITY,
     SOURCE_TYPE_RSS,
     SOURCE_TYPE_WEB_PAGE,
 )
 from ai_radar.collectors.base import CollectedItem
+from ai_radar.collectors.community import CommunityCollector
 from ai_radar.collectors.github_commit import GitHubCommitCollector
 from ai_radar.collectors.github_release import GitHubReleaseCollector
 from ai_radar.collectors.rss import RSSCollector
@@ -112,6 +114,54 @@ def test_source_must_pass_connection_test_before_enable(session):
     assert session.scalar(select(SourceItem.id)) is None
 
 
+def test_empty_source_test_fails_and_keeps_source_disabled(session):
+    source = SourceConfig(
+        name="HTML configured as RSS",
+        source_type=SOURCE_TYPE_RSS,
+        url="https://x/not-a-feed",
+        enabled=False,
+        test_status="UNTESTED",
+    )
+    session.add(source)
+    session.flush()
+
+    with patch.object(RSSCollector, "collect", return_value=[]):
+        result = CollectionService(session).test_source(source.id)
+
+    assert result["status"] == "FAILED"
+    assert result["items_seen"] == 0
+    assert "未读取到任何文章" in result["error"]
+    assert source.test_status == "FAILED"
+    assert source.enabled is False
+    assert "未读取到任何文章" in source.last_error
+
+
+def test_challenge_page_does_not_pass_source_test(session):
+    source = SourceConfig(
+        name="dynamic page",
+        source_type=SOURCE_TYPE_WEB_PAGE,
+        url="https://x/dynamic",
+        enabled=True,
+        test_status="PASSED",
+    )
+    session.add(source)
+    session.flush()
+
+    challenge = _item(
+        "challenge",
+        "Please wait...",
+        "Please wait while we check your browser.",
+    )
+    with patch.object(WebPageCollector, "collect", return_value=[challenge]):
+        result = CollectionService(session).test_source(source.id)
+
+    assert result["status"] == "FAILED"
+    assert result["items_seen"] == 0
+    assert "验证页面或占位页面" in result["error"]
+    assert source.test_status == "FAILED"
+    assert source.enabled is False
+
+
 def test_failed_source_test_disables_source(session):
     source = SourceConfig(
         name="broken source",
@@ -188,6 +238,27 @@ def test_design_source_types_are_routed(
     session.flush()
 
     with patch.object(collector_cls, "collect", return_value=[_item("design-1")]):
+        new, seen = CollectionService(session)._collect_one(source)
+
+    assert (new, seen) == (1, 1)
+
+
+def test_community_source_is_routed_through_platform_adapter(session):
+    source = SourceConfig(
+        name="V2EX",
+        source_type=SOURCE_TYPE_COMMUNITY,
+        url="https://www.v2ex.com/",
+        enabled=True,
+        test_status="PASSED",
+    )
+    session.add(source)
+    session.flush()
+
+    with patch.object(
+        CommunityCollector,
+        "collect",
+        return_value=[_item("community-1")],
+    ):
         new, seen = CollectionService(session)._collect_one(source)
 
     assert (new, seen) == (1, 1)

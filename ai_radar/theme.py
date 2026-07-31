@@ -319,7 +319,7 @@ def inject_app_styles() -> None:
           border-top:1px solid #f0f1f5;
         }
         .source-detail-meta {
-          display:grid; grid-template-columns:repeat(3,minmax(0,1fr));
+          display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
           gap:.6rem; margin:.8rem 0 .68rem;
         }
         .source-detail-meta > div {
@@ -337,6 +337,13 @@ def inject_app_styles() -> None:
         .source-detail-meta strong.success { color:var(--radar-good); }
         .source-detail-meta strong.failed { color:var(--radar-bad); }
         .source-detail-meta strong.pending { color:#986710; }
+        .source-detail-meta strong.source-kind-community { color:#9a5b13; }
+        .source-detail-meta strong.source-kind-rss,
+        .source-detail-meta strong.source-kind-web_page,
+        .source-detail-meta strong.source-kind-github_release,
+        .source-detail-meta strong.source-kind-github_commit {
+          color:#365eb6;
+        }
         .source-detail-url {
           margin:.2rem 0 .35rem; color:var(--radar-muted); font-size:.72rem;
           overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -452,7 +459,20 @@ def inject_app_styles() -> None:
         .inbox-source-inline.web { color:#b16b19; }
         .inbox-source-inline.release { color:#7156c8; }
         .inbox-source-inline.commit { color:#16856b; }
+        .inbox-source-inline.community { color:#a45f12; }
         .inbox-source-inline.neutral { color:#7d8594; }
+        .inbox-source-kind {
+          display:inline-flex; align-items:center; margin:0 .18rem 0 .42rem;
+          padding:.08rem .34rem; border-radius:999px;
+          font-size:.58rem; line-height:1.35; font-weight:760;
+          vertical-align:.12rem;
+        }
+        .inbox-source-kind.official {
+          color:#365eb6; background:#edf2ff;
+        }
+        .inbox-source-kind.community {
+          color:#93570f; background:#fff1dc;
+        }
         .inbox-detail-divider {
           height:1px; margin:.72rem 0 .8rem; background:#eef0f4;
         }
