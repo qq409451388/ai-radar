@@ -9,6 +9,7 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ai_radar.config import get_config, mask_secret
@@ -37,7 +38,12 @@ class LlmError(RuntimeError):
 class LlmClient:
     """Unified LLM client (section 十一)."""
 
-    def __init__(self, session: Session | None = None) -> None:
+    def __init__(
+        self,
+        session: Session | None = None,
+        *,
+        independent_persistence: bool = False,
+    ) -> None:
         cfg = get_config().llm
         if not cfg.base_url or not cfg.api_key:
             log.warning(
@@ -50,6 +56,7 @@ class LlmClient:
         self.model = cfg.model
         self.timeout = cfg.timeout_seconds
         self.session = session
+        self.independent_persistence = independent_persistence
 
     # ---------- public API ----------
 
@@ -162,26 +169,61 @@ class LlmClient:
         raise LlmError(f"LLM call failed after retries: {last_exc}")
 
     def _cache_get(self, cache_key: str) -> LlmResponseCache | None:
-        if self.session is None:
+        if self.session is not None:
+            return self.session.execute(
+                select(LlmResponseCache).where(
+                    LlmResponseCache.cache_key == cache_key
+                )
+            ).scalar_one_or_none()
+        if not self.independent_persistence:
             return None
-        return self.session.execute(
-            select(LlmResponseCache).where(LlmResponseCache.cache_key == cache_key)
-        ).scalar_one_or_none()
+        from ai_radar.database import session_scope
+
+        with session_scope() as session:
+            return session.execute(
+                select(LlmResponseCache).where(
+                    LlmResponseCache.cache_key == cache_key
+                )
+            ).scalar_one_or_none()
 
     def _cache_put(self, cache_key: str, operation: str, response: dict) -> None:
-        if self.session is None:
-            return
-        if self._cache_get(cache_key) is not None:
-            return
-        self.session.add(
-            LlmResponseCache(
-                cache_key=cache_key,
-                operation=operation,
-                model_name=self.model,
-                response_json=dump_json(response),
+        if self.session is not None:
+            if self._cache_get(cache_key) is not None:
+                return
+            self.session.add(
+                LlmResponseCache(
+                    cache_key=cache_key,
+                    operation=operation,
+                    model_name=self.model,
+                    response_json=dump_json(response),
+                )
             )
-        )
-        self.session.flush()
+            self.session.flush()
+            return
+        if not self.independent_persistence:
+            return
+        from ai_radar.database import session_scope
+
+        try:
+            with session_scope() as session:
+                existing = session.execute(
+                    select(LlmResponseCache.id).where(
+                        LlmResponseCache.cache_key == cache_key
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    session.add(
+                        LlmResponseCache(
+                            cache_key=cache_key,
+                            operation=operation,
+                            model_name=self.model,
+                            response_json=dump_json(response),
+                        )
+                    )
+        except IntegrityError:
+            # Two identical concurrent requests may finish together. Either
+            # cache row is valid, so the loser can safely continue.
+            log.debug("concurrent cache insert already won for %s", cache_key[:12])
 
     def _record_usage(
         self,
@@ -194,21 +236,26 @@ class LlmClient:
         estimated: bool,
         cache_hit: bool,
     ) -> None:
-        if self.session is None:
-            return
-        self.session.add(
-            LlmUsageLog(
-                operation=operation,
-                model_name=self.model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                input_chars=input_chars,
-                output_chars=output_chars,
-                estimated=estimated,
-                cache_hit=cache_hit,
-            )
+        record = LlmUsageLog(
+            operation=operation,
+            model_name=self.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            input_chars=input_chars,
+            output_chars=output_chars,
+            estimated=estimated,
+            cache_hit=cache_hit,
         )
-        self.session.flush()
+        if self.session is not None:
+            self.session.add(record)
+            self.session.flush()
+            return
+        if not self.independent_persistence:
+            return
+        from ai_radar.database import session_scope
+
+        with session_scope() as session:
+            session.add(record)
 
 
 # ---------- helpers ----------

@@ -161,11 +161,26 @@ class CoverageService:
             "failed": failed,
         }
 
-    def assess_one(self, change_point_id: int) -> KnowledgeCoverage:
+    def assess_one(
+        self,
+        change_point_id: int,
+        trigger_type: str = "MANUAL",
+    ) -> KnowledgeCoverage:
         cp = self.session.get(ChangePoint, change_point_id)
         if cp is None:
             raise ValueError(f"change_point {change_point_id} not found")
-        return self._assess_one(cp, trigger_type="MANUAL")
+        return self._assess_one(cp, trigger_type=trigger_type)
+
+    def compute_one(
+        self,
+        change_point_id: int,
+        trigger_type: str = "MANUAL",
+    ) -> KnowledgeCoverage:
+        """Compute a detached coverage result without writing domain rows."""
+        cp = self.session.get(ChangePoint, change_point_id)
+        if cp is None:
+            raise ValueError(f"change_point {change_point_id} not found")
+        return self._compute_coverage(cp, trigger_type=trigger_type)
 
     def _has_recent_coverage(self, change_point_id: int) -> bool:
         existing = self.session.execute(
@@ -180,6 +195,15 @@ class CoverageService:
 
     def _assess_one(
         self, cp: ChangePoint, trigger_type: str = "SCHEDULED"
+    ) -> KnowledgeCoverage:
+        coverage = self._compute_coverage(cp, trigger_type=trigger_type)
+        self._persist(cp.id, coverage)
+        return coverage
+
+    def _compute_coverage(
+        self,
+        cp: ChangePoint,
+        trigger_type: str = "SCHEDULED",
     ) -> KnowledgeCoverage:
         facts = self._rank_candidate_facts(cp, self._facts_for_topic(cp.topic_id))
         facts_block = self._render_facts(facts)
@@ -201,7 +225,6 @@ class CoverageService:
                 trigger_type=trigger_type,
                 assessment_fingerprint=fingerprint,
             )
-            self._persist(cp.id, coverage)
             return coverage
 
         try:
@@ -262,7 +285,6 @@ class CoverageService:
             trigger_type=trigger_type,
             assessment_fingerprint=fingerprint,
         )
-        self._persist(cp.id, coverage)
         return coverage
 
     def _persist(self, change_point_id: int, coverage: KnowledgeCoverage) -> None:

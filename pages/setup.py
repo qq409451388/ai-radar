@@ -102,6 +102,7 @@ def _initialize_wizard_state(cfg: AppConfig) -> None:
         "scheduler_enabled": cfg.scheduler_enabled,
         "http_timeout": cfg.http_timeout,
         "analyze_batch_size": cfg.analyze_batch_size,
+        "ai_concurrency": cfg.ai_concurrency,
         "score_window_days": cfg.score_window_days,
         "max_assessment_facts": cfg.max_assessment_facts,
     }
@@ -347,8 +348,16 @@ def _render_preferences_step(_cfg: AppConfig) -> None:
             key=_field_key("max_assessment_facts"),
             help="每个知识点最多交给模型匹配多少条个人事实。",
         )
-        with st.expander("高级：网络超时"):
-            st.number_input(
+        with st.expander("高级设置"):
+            advanced = st.columns(2)
+            advanced[0].number_input(
+                "同时进行的 AI 请求",
+                min_value=1,
+                max_value=8,
+                key=_field_key("ai_concurrency"),
+                help="流水线会并行处理多个独立知识点。个人使用推荐 4。",
+            )
+            advanced[1].number_input(
                 "外部请求超时（秒）",
                 min_value=5,
                 max_value=300,
@@ -497,13 +506,19 @@ def _render_editor(cfg: AppConfig) -> None:
                 max_value=100,
                 value=cfg.max_assessment_facts,
             )
-            pref_cols = st.columns(3)
+            pref_cols = st.columns(4)
             timezone_name = pref_cols[0].text_input("时区", value=cfg.timezone)
             scheduler_enabled = pref_cols[1].toggle(
                 "启用定时任务",
                 value=cfg.scheduler_enabled,
             )
-            http_timeout = pref_cols[2].number_input(
+            ai_concurrency = pref_cols[2].number_input(
+                "AI 并发请求",
+                min_value=1,
+                max_value=8,
+                value=cfg.ai_concurrency,
+            )
+            http_timeout = pref_cols[3].number_input(
                 "HTTP 超时（秒）",
                 min_value=5,
                 max_value=300,
@@ -528,6 +543,7 @@ def _render_editor(cfg: AppConfig) -> None:
                 "scheduler_enabled": scheduler_enabled,
                 "http_timeout": http_timeout,
                 "analyze_batch_size": batch_size,
+                "ai_concurrency": ai_concurrency,
                 "score_window_days": score_days,
                 "max_assessment_facts": fact_limit,
             }
@@ -647,6 +663,7 @@ def _wizard_values() -> dict[str, Any]:
         "scheduler_enabled",
         "http_timeout",
         "analyze_batch_size",
+        "ai_concurrency",
         "score_window_days",
         "max_assessment_facts",
     )

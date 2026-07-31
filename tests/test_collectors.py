@@ -90,6 +90,48 @@ def test_rss_collector_external_id_is_dedup_key(session):
     assert items[0].analyze_status == "PENDING"
 
 
+def test_source_must_pass_connection_test_before_enable(session):
+    source = SourceConfig(
+        name="new source",
+        source_type=SOURCE_TYPE_RSS,
+        url="https://x/new-feed",
+        enabled=False,
+        test_status="UNTESTED",
+    )
+    session.add(source)
+    session.flush()
+
+    with patch.object(RSSCollector, "collect", return_value=[_item("preview")]):
+        result = CollectionService(session).test_source(source.id)
+
+    assert result["status"] == "PASSED"
+    assert result["items_seen"] == 1
+    assert source.test_status == "PASSED"
+    assert source.last_tested_at is not None
+    assert source.enabled is False
+    assert session.scalar(select(SourceItem.id)) is None
+
+
+def test_failed_source_test_disables_source(session):
+    source = SourceConfig(
+        name="broken source",
+        source_type=SOURCE_TYPE_RSS,
+        url="https://x/broken-feed",
+        enabled=True,
+        test_status="PASSED",
+    )
+    session.add(source)
+    session.flush()
+
+    with patch.object(RSSCollector, "collect", side_effect=RuntimeError("offline")):
+        result = CollectionService(session).test_source(source.id)
+
+    assert result["status"] == "FAILED"
+    assert source.test_status == "FAILED"
+    assert source.enabled is False
+    assert "offline" in source.last_error
+
+
 # --- Test 5: GitHub Release dedup ---
 
 def test_github_release_dedup(session):

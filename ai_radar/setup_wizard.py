@@ -131,6 +131,9 @@ def build_user_config(cfg: Any, values: Mapping[str, Any]) -> dict[str, Any]:
             "scheduler_enabled": bool(values["scheduler_enabled"]),
             "http_timeout": int(values["http_timeout"]),
             "analyze_batch_size": int(values["analyze_batch_size"]),
+            "ai_concurrency": int(
+                values.get("ai_concurrency", getattr(cfg, "ai_concurrency", 4))
+            ),
             "score_window_days": int(values["score_window_days"]),
             "max_assessment_facts": int(values["max_assessment_facts"]),
         }

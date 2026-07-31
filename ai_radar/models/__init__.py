@@ -64,6 +64,13 @@ class SourceConfig(Base):
         ForeignKey("topic.id", ondelete="SET NULL"), nullable=True, index=True
     )
     last_collected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    test_status: Mapped[str] = mapped_column(
+        String(16),
+        default="UNTESTED",
+        server_default="UNTESTED",
+        index=True,
+    )  # UNTESTED / PASSED / FAILED
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

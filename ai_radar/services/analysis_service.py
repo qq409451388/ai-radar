@@ -79,36 +79,19 @@ class AnalysisService:
                     )
                 jl.processed_count += 1
                 try:
-                    result = self._analyze_one(item)
-                    if result is None:
-                        item.analyze_status = ANALYZE_IGNORED
-                        ignored += 1
-                    else:
-                        item.analyze_status = ANALYZE_SUCCESS
-                        success += 1
-                        new_cp += 1
-                    item.analyze_error = ""
-                    item.next_retry_at = None
+                    analysis = self.request_analysis(item)
+                    outcome = self.complete_analysis(item, analysis)
+                    ignored += outcome["ignored"]
+                    success += outcome["success"]
+                    new_cp += outcome["new_change_points"]
                 except LlmError as exc:
-                    item.analyze_status = ANALYZE_FAILED
-                    item.analyze_error = str(exc)
-                    item.retry_count += 1
-                    item.next_retry_at = now + timedelta(
-                        hours=min(24, 2 ** min(item.retry_count, 5))
-                    )
+                    self.fail_analysis(item, exc, now=now)
                     failed += 1
                     log.warning("analyze item %s failed: %s", item.id, exc)
                 except Exception as exc:
-                    item.analyze_status = ANALYZE_FAILED
-                    item.analyze_error = f"{type(exc).__name__}: {exc}"
-                    item.retry_count += 1
-                    item.next_retry_at = now + timedelta(
-                        hours=min(24, 2 ** min(item.retry_count, 5))
-                    )
+                    self.fail_analysis(item, exc, now=now)
                     failed += 1
                     log.exception("analyze item %s errored", item.id)
-                item.last_analyzed_at = datetime.now(timezone.utc)
-                item.updated_at = datetime.now(timezone.utc)
                 if progress_callback:
                     progress_callback(
                         index,
@@ -154,11 +137,16 @@ class AnalysisService:
             item.analyze_error = f"自动归档：早于 {days} 天的历史积压"
         return {"archived": len(items), "days": days}
 
-    def _analyze_one(self, item: SourceItem) -> dict | None:
+    def request_analysis(self, item: SourceItem):
+        """Run only the remote AI inference for an item.
+
+        Persistence is intentionally separate so the orchestrator can execute
+        independent requests concurrently, then apply results serially.
+        """
         source = self.session.get(SourceConfig, item.source_config_id)
         source_name = source.name if source else "unknown"
         published = item.published_at.isoformat() if item.published_at else ""
-        analysis = self.llm.extract_change_points(
+        return self.llm.extract_change_points(
             {
                 "source_name": source_name,
                 "source_type": source.source_type if source else "",
@@ -169,6 +157,63 @@ class AnalysisService:
             }
         )
 
+    def complete_analysis(self, item: SourceItem, analysis) -> dict:
+        result = self._persist_analysis(item, analysis)
+        if result is None:
+            item.analyze_status = ANALYZE_IGNORED
+            outcome = {
+                "success": 0,
+                "ignored": 1,
+                "failed": 0,
+                "new_change_points": 0,
+            }
+        else:
+            item.analyze_status = ANALYZE_SUCCESS
+            outcome = {
+                "success": 1,
+                "ignored": 0,
+                "failed": 0,
+                "new_change_points": 1,
+            }
+        item.analyze_error = ""
+        item.next_retry_at = None
+        item.last_analyzed_at = datetime.now(timezone.utc)
+        item.updated_at = datetime.now(timezone.utc)
+        return outcome
+
+    def fail_analysis(
+        self,
+        item: SourceItem,
+        exc: Exception,
+        *,
+        now: datetime | None = None,
+    ) -> dict:
+        failed_at = now or datetime.now(timezone.utc)
+        item.analyze_status = ANALYZE_FAILED
+        item.analyze_error = (
+            str(exc)
+            if isinstance(exc, LlmError)
+            else f"{type(exc).__name__}: {exc}"
+        )
+        item.retry_count += 1
+        item.next_retry_at = failed_at + timedelta(
+            hours=min(24, 2 ** min(item.retry_count, 5))
+        )
+        item.last_analyzed_at = failed_at
+        item.updated_at = failed_at
+        return {
+            "success": 0,
+            "ignored": 0,
+            "failed": 1,
+            "new_change_points": 0,
+        }
+
+    def _analyze_one(self, item: SourceItem) -> dict | None:
+        """Compatibility wrapper for callers that need one synchronous item."""
+        return self._persist_analysis(item, self.request_analysis(item))
+
+    def _persist_analysis(self, item: SourceItem, analysis) -> dict | None:
+        source = self.session.get(SourceConfig, item.source_config_id)
         if not analysis.relevant:
             return None
 

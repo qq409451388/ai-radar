@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
+from itertools import islice
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -87,24 +88,47 @@ class CollectionService:
         cfg.last_error = ""
         return {"new": new, "seen": seen, "source": cfg.name}
 
+    def test_source(self, source_config_id: int) -> dict:
+        """Test one source without persisting collected items.
+
+        A successful test is required before a newly added source can be
+        enabled. Existing sources migrated from older versions stay trusted.
+        """
+        cfg = self.session.get(SourceConfig, source_config_id)
+        if cfg is None:
+            raise ValueError(f"source_config {source_config_id} not found")
+        tested_at = datetime.now(timezone.utc)
+        try:
+            collector = self._collector_for(cfg)
+            preview = list(islice(collector.collect(), 3))
+            cfg.test_status = "PASSED"
+            cfg.last_tested_at = tested_at
+            cfg.last_error = ""
+            return {
+                "source": cfg.name,
+                "status": "PASSED",
+                "items_seen": len(preview),
+                "sample_titles": [
+                    item.title for item in preview if getattr(item, "title", "")
+                ],
+            }
+        except Exception as exc:
+            cfg.test_status = "FAILED"
+            cfg.last_tested_at = tested_at
+            cfg.last_error = f"{type(exc).__name__}: {exc}"
+            # A failed re-test must not leave a source collecting silently.
+            cfg.enabled = False
+            log.warning("test source %s failed: %s", cfg.name, exc)
+            return {
+                "source": cfg.name,
+                "status": "FAILED",
+                "items_seen": 0,
+                "sample_titles": [],
+                "error": cfg.last_error,
+            }
+
     def _collect_one(self, cfg: SourceConfig) -> tuple[int, int]:
-        if cfg.source_type == SOURCE_TYPE_RSS:
-            collector = RSSCollector(cfg.name, cfg.url)
-        elif cfg.source_type == SOURCE_TYPE_WEB_PAGE:
-            collector = WebPageCollector(cfg.name, cfg.url, cfg.path_filter)
-        elif cfg.source_type == SOURCE_TYPE_GITHUB_RELEASE:
-            repo = cfg.repository or _repo_from_url(cfg.url)
-            collector = GitHubReleaseCollector(cfg.name, repo)
-        elif cfg.source_type == SOURCE_TYPE_GITHUB_COMMIT:
-            repo = cfg.repository or _repo_from_url(cfg.url)
-            collector = GitHubCommitCollector(
-                cfg.name,
-                repo,
-                cfg.path_filter,
-            )
-        else:
-            log.warning("unknown source_type %s for %s", cfg.source_type, cfg.name)
-            return 0, 0
+        collector = self._collector_for(cfg)
 
         new = 0
         seen = 0
@@ -113,6 +137,24 @@ class CollectionService:
             if self._upsert_item(cfg.id, item):
                 new += 1
         return new, seen
+
+    def _collector_for(self, cfg: SourceConfig):
+        if cfg.source_type == SOURCE_TYPE_RSS:
+            return RSSCollector(cfg.name, cfg.url)
+        elif cfg.source_type == SOURCE_TYPE_WEB_PAGE:
+            return WebPageCollector(cfg.name, cfg.url, cfg.path_filter)
+        elif cfg.source_type == SOURCE_TYPE_GITHUB_RELEASE:
+            repo = cfg.repository or _repo_from_url(cfg.url)
+            return GitHubReleaseCollector(cfg.name, repo)
+        elif cfg.source_type == SOURCE_TYPE_GITHUB_COMMIT:
+            repo = cfg.repository or _repo_from_url(cfg.url)
+            return GitHubCommitCollector(
+                cfg.name,
+                repo,
+                cfg.path_filter,
+            )
+        else:
+            raise ValueError(f"不支持的资讯源类型：{cfg.source_type}")
 
     def _upsert_item(self, source_config_id: int, item) -> bool:
         """Insert a new item if not already present. Returns True if inserted."""

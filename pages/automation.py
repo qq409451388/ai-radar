@@ -1,8 +1,7 @@
-"""Automation, source management, jobs, and token observability."""
+"""Operational history, schedules, token usage, and configuration health."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -15,93 +14,54 @@ from ai_radar.models import (
     LlmResponseCache,
     LlmUsageLog,
     ProfileSourceFile,
-    SourceConfig,
     SourceItem,
-    Topic,
-)
-from ai_radar.pipeline_runner import (
-    ACTIVE_STATUSES,
-    PIPELINES,
-    enqueue_pipeline,
-    get_active_pipeline_snapshot,
-    get_pipeline_snapshot,
 )
 from ai_radar.scheduler import get_scheduler
 from ai_radar.ui import fmt_dt
 
 
+SCHEDULE_COPY = {
+    "daily_morning_pipeline": {
+        "name": "获取今天的新资讯",
+        "time": "每天 08:00",
+        "description": "从已开启的资讯源获取内容，并完成第一轮 AI 分析。",
+    },
+    "sync_profile": {
+        "name": "同步我的知识记录",
+        "time": "每天 09:00",
+        "description": "读取记忆仓库的新内容，更新与你有关的知识证据。",
+    },
+    "daily_evening_pipeline": {
+        "name": "整理今天的知识进展",
+        "time": "每天 23:00",
+        "description": "评估新变化与个人记录的关系，并保存今日进展。",
+    },
+}
+
+
 def render() -> None:
     cfg = get_config()
-    st.markdown('<div class="page-kicker">Automation & settings</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-kicker">Operations</div>', unsafe_allow_html=True)
     st.title("自动化与设置")
     st.markdown(
-        '<div class="page-subtitle">查看流水线健康度、Token 使用和资讯源；高级操作集中在这里。</div>',
+        '<div class="page-subtitle">'
+        "这里保留运行结果和系统健康度。需要立即重跑时，请使用左侧醒目的“更新中心”。"
+        "</div>",
         unsafe_allow_html=True,
     )
 
-    pipeline_tab, sources_tab, usage_tab, config_tab = st.tabs(
-        ["任务流水线", "资讯源", "Token 与缓存", "配置状态"]
+    jobs_tab, usage_tab, config_tab = st.tabs(
+        ["运行记录", "Token 与缓存", "配置状态"]
     )
-    with pipeline_tab:
-        _render_pipeline()
-    with sources_tab:
-        _render_sources()
+    with jobs_tab:
+        _render_operations()
     with usage_tab:
         _render_usage()
     with config_tab:
         _render_config(cfg)
 
 
-def _render_pipeline() -> None:
-    st.markdown("### 启动一次更新")
-    st.caption(
-        "任务在后台执行。离开本页面不会中断；关闭 AI Radar 的终端或应用进程会中断。"
-    )
-
-    labels = [definition.label for definition in PIPELINES.values()]
-    selected_label = st.segmented_control(
-        "更新范围",
-        labels,
-        default=labels[0],
-        key="pipeline_type_selector",
-    ) or labels[0]
-    selected = next(
-        definition
-        for definition in PIPELINES.values()
-        if definition.label == selected_label
-    )
-    st.markdown(
-        f'<div class="pipeline-choice-note">{escape(selected.description)}</div>',
-        unsafe_allow_html=True,
-    )
-
-    active = get_active_pipeline_snapshot()
-    action_col, hint_col = st.columns([1.25, 3.75])
-    with action_col:
-        if st.button(
-            f"启动{selected.label}",
-            type="primary",
-            width="stretch",
-            disabled=active is not None,
-        ):
-            run_id, created = enqueue_pipeline(selected.key)
-            if created:
-                st.toast(f"{selected.label}已在后台启动", icon="🚀")
-            else:
-                st.toast(f"任务 #{run_id} 已在运行", icon="⏳")
-            st.rerun()
-    with hint_col:
-        if active:
-            st.info(
-                f"{active['pipeline_label']} #{active['id']} 正在运行。"
-                "为避免重复调用模型，完成前不会再启动第二条手动流水线。"
-            )
-        else:
-            step_names = " → ".join(step.label for step in selected.steps)
-            st.caption(f"将按顺序执行：{step_names}")
-
-    _render_pipeline_progress()
-
+def _render_operations() -> None:
     with session_scope() as session:
         counts = dict(
             session.execute(
@@ -115,279 +75,67 @@ def _render_pipeline() -> None:
                 ProfileSourceFile.extraction_status == "FAILED"
             )
         ) or 0
+        # Keep this intentionally bounded: the page is an operational glance,
+        # not an unbounded audit log.
         jobs = list(
             session.execute(
-                select(JobLog).order_by(JobLog.id.desc()).limit(50)
+                select(JobLog).order_by(JobLog.id.desc()).limit(20)
             ).scalars()
         )
+
+    st.markdown("### 当前处理状态")
     metrics = st.columns(4)
     metrics[0].metric("待分析", counts.get("PENDING", 0))
     metrics[1].metric("分析失败", counts.get("FAILED", 0))
     metrics[2].metric("记忆抽取失败", extraction_failed)
     metrics[3].metric(
-        "最近任务",
-        jobs[0].status if jobs else "无",
-        jobs[0].job_type if jobs else None,
+        "最近一次任务",
+        _job_status_label(jobs[0].status) if jobs else "还没有",
+        _job_type_label(jobs[0].job_type) if jobs else None,
     )
+    st.caption("需要完整处理积压时，请点击左侧栏“运行 / 重跑更新”。")
 
-    st.markdown("### 定时计划")
-    scheduler_rows = []
-    for job in get_scheduler().get_jobs():
-        scheduler_rows.append(
-            {
-                "任务": job.id,
-                "下次执行": fmt_dt(getattr(job, "next_run_time", None)),
-                "计划": str(job.trigger),
-            }
-        )
-    if scheduler_rows:
-        st.dataframe(
-            pd.DataFrame(scheduler_rows),
-            width="stretch",
-            hide_index=True,
-        )
+    st.markdown("### 自动更新计划")
+    scheduled = {
+        job.id: job for job in get_scheduler().get_jobs()
+    }
+    if scheduled:
+        for job_id, copy in SCHEDULE_COPY.items():
+            job = scheduled.get(job_id)
+            if job is None:
+                continue
+            with st.container(border=True):
+                title_col, time_col = st.columns([3, 1])
+                title_col.markdown(f"**{copy['name']}**")
+                title_col.caption(copy["description"])
+                time_col.markdown(f"**{copy['time']}**")
+                time_col.caption(
+                    f"下次：{fmt_dt(getattr(job, 'next_run_time', None))}"
+                )
         st.caption(
-            "当前是进程内调度：Streamlit 持续运行时生效。应用关闭期间不会执行，"
-            "重新打开后可在首页点“运行今日更新”补跑。"
+            "自动更新只在 AI Radar 保持运行时执行。错过计划后，可从左侧更新中心手动补跑。"
         )
     else:
-        st.warning("调度器未启用。")
+        st.info("自动更新目前已关闭；手动更新仍可正常使用。")
 
-    st.markdown("### 最近任务")
+    st.markdown("### 最近 20 条任务")
     if jobs:
         data = [
             {
-                "任务": job.job_type,
-                "状态": job.status,
-                "开始": fmt_dt(job.started_at),
+                "任务": _job_type_label(job.job_type),
+                "状态": _job_status_label(job.status),
+                "开始时间": fmt_dt(job.started_at),
                 "耗时": _duration(job.started_at, job.finished_at),
                 "处理": job.processed_count,
                 "成功": job.success_count,
                 "失败": job.failed_count,
-                "结果": job.message,
+                "说明": job.message,
             }
             for job in jobs
         ]
         st.dataframe(pd.DataFrame(data), width="stretch", hide_index=True)
-
-
-@st.fragment(run_every=2.0)
-def _render_pipeline_progress() -> None:
-    snapshot = get_pipeline_snapshot()
-    if snapshot is None:
-        st.markdown(
-            '<div class="pipeline-empty">尚未运行手动流水线。选择更新范围后即可开始。</div>',
-            unsafe_allow_html=True,
-        )
-        return
-
-    status = snapshot["status"]
-    active = status in ACTIVE_STATUSES
-    status_labels = {
-        "QUEUED": "排队中",
-        "RUNNING": "运行中",
-        "SUCCESS": "已完成",
-        "PARTIAL": "部分完成",
-        "FAILED": "运行失败",
-        "INTERRUPTED": "已中断",
-    }
-    status_class = {
-        "SUCCESS": "success",
-        "PARTIAL": "partial",
-        "FAILED": "failed",
-        "INTERRUPTED": "failed",
-        "RUNNING": "running",
-        "QUEUED": "running",
-    }.get(status, "")
-    current_step = next(
-        (
-            step
-            for step in snapshot["steps"]
-            if step["key"] == snapshot["current_step"]
-        ),
-        None,
-    )
-    elapsed_end = datetime.now(timezone.utc) if active else snapshot["finished_at"]
-    elapsed = _duration(snapshot["started_at"], elapsed_end)
-    st.markdown(
-        f"""
-        <div class="pipeline-run-head">
-          <div>
-            <span class="pipeline-run-title">{escape(snapshot['pipeline_label'])} #{snapshot['id']}</span>
-            <span class="pipeline-status {status_class}">{escape(status_labels.get(status, status))}</span>
-          </div>
-          <div class="pipeline-run-meta">开始 {escape(fmt_dt(snapshot['started_at']))} · 已用时 {escape(elapsed)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.progress(
-        min(1.0, max(0.0, snapshot["progress"])),
-        text=(
-            f"{int(snapshot['progress'] * 100)}% · "
-            f"{current_step['label'] if current_step else status_labels.get(status, status)}"
-        ),
-    )
-    _render_stepper(snapshot["steps"])
-
-    live = snapshot.get("live", {})
-    message = live.get("message") or (
-        current_step["message"] if current_step else ""
-    )
-    if active:
-        current = live.get("current", 0)
-        total = live.get("total", 0)
-        detail = f" · {current}/{total}" if total else ""
-        st.caption(
-            f"⏳ {message or '后台任务正在执行'}{detail}。"
-            "页面每 2 秒刷新；模型单次请求较慢时，数字可能短暂停留。"
-        )
-    elif status == "SUCCESS":
-        analyze_result = snapshot["result"].get("analyze_all", {})
-        if analyze_result:
-            st.success(
-                f"完整更新已完成：共处理 "
-                f"{analyze_result.get('processed', 0)} 条，"
-                f"剩余待处理 {analyze_result.get('remaining_pending', 0)} 条。"
-            )
-        else:
-            st.success("流水线已完成，相关页面的数据已更新。")
-    elif status == "PARTIAL":
-        st.warning("流水线已完成，但部分项目处理失败。展开下方步骤可查看详情。")
-    elif status in ("FAILED", "INTERRUPTED"):
-        st.error(snapshot["error"] or message or "流水线未完成。")
-
-    with st.expander(
-        "步骤详情",
-        expanded=status in ("FAILED", "PARTIAL", "INTERRUPTED"),
-    ):
-        for step in snapshot["steps"]:
-            icon = {
-                "SUCCESS": "✅",
-                "PARTIAL": "⚠️",
-                "RUNNING": "🔄",
-                "FAILED": "❌",
-                "INTERRUPTED": "⏹️",
-                "SKIPPED": "⏭️",
-                "PENDING": "○",
-            }.get(step["status"], "○")
-            cols = st.columns([0.35, 1.4, 1, 3])
-            cols[0].write(icon)
-            cols[1].markdown(f"**{step['label']}**")
-            cols[2].caption(
-                _duration(step["started_at"], step["finished_at"])
-            )
-            cols[3].caption(step["message"] or "等待前一步完成")
-
-
-def _render_stepper(steps: list[dict]) -> None:
-    icon_by_status = {
-        "SUCCESS": "✓",
-        "PARTIAL": "!",
-        "RUNNING": "↻",
-        "FAILED": "×",
-        "INTERRUPTED": "■",
-        "SKIPPED": "–",
-    }
-    parts: list[str] = ['<div class="pipeline-stepper">']
-    for index, step in enumerate(steps, start=1):
-        if index > 1:
-            previous = steps[index - 2]["status"]
-            connector_class = (
-                "done" if previous in ("SUCCESS", "PARTIAL") else ""
-            )
-            parts.append(
-                f'<div class="pipeline-connector {connector_class}"></div>'
-            )
-        status = step["status"].lower()
-        icon = (
-            str(index)
-            if step["status"] == "PENDING"
-            else icon_by_status.get(step["status"], str(index))
-        )
-        parts.append(
-            f"""
-            <div class="pipeline-step {escape(status)}">
-              <div class="pipeline-step-dot">{escape(icon)}</div>
-              <div class="pipeline-step-label">{escape(step['label'])}</div>
-            </div>
-            """
-        )
-    parts.append("</div>")
-    st.markdown("".join(parts), unsafe_allow_html=True)
-
-
-def _render_sources() -> None:
-    with session_scope() as session:
-        topics = list(session.execute(select(Topic).order_by(Topic.id)).scalars())
-        sources = list(
-            session.execute(select(SourceConfig).order_by(SourceConfig.name)).scalars()
-        )
-        topic_names = {topic.id: topic.name for topic in topics}
-
-        st.markdown("### 新增来源")
-        with st.form("new_source", border=True):
-            cols = st.columns([1.2, 1.15, 2, 1.4])
-            name = cols[0].text_input("名称")
-            source_type = cols[1].selectbox(
-                "类型",
-                ["RSS", "WEB_PAGE", "GITHUB_RELEASE", "GITHUB_COMMIT"],
-            )
-            url = cols[2].text_input("URL")
-            repository = cols[3].text_input(
-                "owner/repo（GitHub 类型）",
-                help="GitHub 类型可填写 owner/repo；留空时会尝试从 URL 推断。",
-            )
-            path_filter = st.text_input(
-                "路径过滤（可选）",
-                help=(
-                    "WEB_PAGE 填文章链接路径片段，例如 /engineering/；"
-                    "GITHUB_COMMIT 填要监控的 docs、spec 或 schema 目录。"
-                ),
-            )
-            topic_id = st.selectbox(
-                "默认领域",
-                [topic.id for topic in topics],
-                format_func=lambda value: topic_names[value],
-            )
-            if st.form_submit_button("添加来源"):
-                if not name.strip() or not url.strip():
-                    st.error("名称和 URL 必填")
-                else:
-                    session.add(
-                        SourceConfig(
-                            name=name.strip(),
-                            source_type=source_type,
-                            url=url.strip(),
-                            repository=repository.strip(),
-                            path_filter=path_filter.strip(),
-                            enabled=True,
-                            default_topic_id=topic_id,
-                        )
-                    )
-                    st.success("来源已添加。")
-
-        st.markdown("### 已配置来源")
-        for source in sources:
-            with st.container(border=True):
-                cols = st.columns([2, 1.2, 1.3, 1, 1])
-                cols[0].markdown(f"**{source.name}**")
-                cols[0].caption(source.url)
-                cols[1].caption(source.source_type)
-                if source.path_filter:
-                    cols[1].caption(f"过滤：{source.path_filter}")
-                cols[2].caption(topic_names.get(source.default_topic_id, "未分类"))
-                cols[3].caption(f"采集 {fmt_dt(source.last_collected_at)}")
-                enabled = cols[4].toggle(
-                    "启用",
-                    value=source.enabled,
-                    key=f"source_enabled_{source.id}",
-                )
-                if enabled != source.enabled:
-                    source.enabled = enabled
-                if source.last_error:
-                    st.error(source.last_error)
+    else:
+        st.info("还没有任务记录。")
 
 
 def _render_usage() -> None:
@@ -428,8 +176,7 @@ def _render_usage() -> None:
     metrics[2].metric("30 天总 Token", f"{month[0] + month[1]:,}")
     metrics[3].metric("缓存条目", cache_entries)
     st.caption(
-        "供应商返回 usage 时记录真实 Token；未返回时按字符数估算并标记。"
-        "缓存命中不会再次请求模型。"
+        "供应商返回 usage 时记录真实 Token；未返回时按字符数估算。缓存命中不会再次请求模型。"
     )
     if by_operation:
         data = pd.DataFrame(
@@ -446,28 +193,26 @@ def _render_usage() -> None:
         )
         st.dataframe(data, width="stretch", hide_index=True)
     else:
-        st.info("新版本启用后产生的 LLM 调用会在这里记录。")
+        st.info("产生 AI 调用后，这里会显示用量。")
 
 
 def _render_config(cfg) -> None:
-    st.page_link(
-        "pages/setup.py",
-        label="编辑平台配置",
-        icon="🔐",
-    )
+    if st.button("🔐 编辑平台配置"):
+        st.switch_page("pages/setup.py")
     rows = [
         ("配置文件", str(cfg.config_path), cfg.config_exists),
         ("数据库", cfg.db_path, True),
         ("时区", cfg.timezone, True),
-        ("调度器", "已启用" if cfg.scheduler_enabled else "已关闭", cfg.scheduler_enabled),
-        ("LLM 地址", "已配置" if cfg.llm.base_url else "未配置", bool(cfg.llm.base_url)),
-        ("LLM Key", "已配置" if cfg.llm.api_key else "未配置", bool(cfg.llm.api_key)),
-        ("LLM 模型", cfg.llm.model, bool(cfg.llm.model)),
+        ("自动更新", "已开启" if cfg.scheduler_enabled else "已关闭", cfg.scheduler_enabled),
+        ("AI 服务地址", "已配置" if cfg.llm.base_url else "未配置", bool(cfg.llm.base_url)),
+        ("AI 密钥", "已配置" if cfg.llm.api_key else "未配置", bool(cfg.llm.api_key)),
+        ("AI 模型", cfg.llm.model, bool(cfg.llm.model)),
+        ("同时 AI 请求数", str(cfg.ai_concurrency), True),
         ("记忆仓库", cfg.profile.repo or "未配置", bool(cfg.profile.repo)),
-        ("记忆 Token", "已配置" if cfg.profile.token else "未配置", bool(cfg.profile.token)),
-        ("单批分析量", str(cfg.analyze_batch_size), True),
-        ("当前评分窗口", f"{cfg.score_window_days} 天", True),
-        ("单次最多候选事实", str(cfg.max_assessment_facts), True),
+        ("记忆访问权限", "已配置" if cfg.profile.token else "未配置", bool(cfg.profile.token)),
+        ("每批分析量", str(cfg.analyze_batch_size), True),
+        ("近期评分范围", f"{cfg.score_window_days} 天", True),
+        ("单次候选事实", str(cfg.max_assessment_facts), True),
     ]
     for label, value, ok in rows:
         cols = st.columns([1.2, 3, 1])
@@ -475,10 +220,28 @@ def _render_config(cfg) -> None:
         cols[1].write(value)
         cols[2].write("✅" if ok else "⚠️")
         st.divider()
-    st.caption(
-        "敏感值只显示是否配置，不会显示 Token 原文。"
-        "页面保存后会自动重新加载配置。"
-    )
+    st.caption("敏感值只显示是否配置，不会显示密钥原文。")
+
+
+def _job_status_label(status: str) -> str:
+    return {
+        "RUNNING": "进行中",
+        "SUCCESS": "已完成",
+        "PARTIAL": "部分完成",
+        "FAILED": "失败",
+    }.get(status, status)
+
+
+def _job_type_label(job_type: str) -> str:
+    return {
+        "collect_sources": "采集资讯",
+        "analyze_items": "AI 分析",
+        "assess_new_change_points": "评估新知识点",
+        "assess_all_change_points": "重新评估全部知识点",
+        "assess_profile_changed": "同步个人知识关系",
+        "sync_profile": "同步个人记录",
+        "save_snapshot": "保存今日进展",
+    }.get(job_type, job_type.replace("_", " "))
 
 
 def _duration(start: datetime | None, end: datetime | None) -> str:
@@ -489,7 +252,7 @@ def _duration(start: datetime | None, end: datetime | None) -> str:
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
     seconds = max(0, int((end - start).total_seconds()))
-    return f"{seconds // 60}m {seconds % 60}s" if seconds >= 60 else f"{seconds}s"
+    return f"{seconds // 60} 分 {seconds % 60} 秒" if seconds >= 60 else f"{seconds} 秒"
 
 
 render()

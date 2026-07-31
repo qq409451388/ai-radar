@@ -78,6 +78,30 @@ class FactService:
         )
         return {"file": f.file_path, "affected_topic_ids": sorted(affected)}
 
+    def request_extraction_with_content(
+        self,
+        source_file_id: int,
+        content: str,
+    ):
+        """Run only the remote extraction request for concurrent pipelines."""
+        f = self.session.get(ProfileSourceFile, source_file_id)
+        if f is None:
+            raise ValueError(f"profile_source_file {source_file_id} not found")
+        return self.llm.extract_profile_facts(f.file_path, content)
+
+    def apply_extraction_with_content(
+        self,
+        source_file_id: int,
+        content_hash: str,
+        extraction,
+    ) -> dict:
+        """Persist one previously computed extraction result."""
+        f = self.session.get(ProfileSourceFile, source_file_id)
+        if f is None:
+            raise ValueError(f"profile_source_file {source_file_id} not found")
+        affected = self._apply_extraction(f, extraction, content_hash)
+        return {"file": f.file_path, "affected_topic_ids": sorted(affected)}
+
     def _extract_for_file(
         self,
         f: ProfileSourceFile,
@@ -132,12 +156,6 @@ class FactService:
         f.extraction_status = "PENDING"
         f.extraction_error = ""
         markdown = content or ""
-        existing_facts = list(
-            self.session.execute(
-                select(ProfileFact).where(ProfileFact.source_file_id == f.id)
-            ).scalars()
-        )
-        affected_topic_ids = {fact.topic_id for fact in existing_facts if fact.topic_id}
 
         try:
             extraction = self.llm.extract_profile_facts(f.file_path, markdown)
@@ -147,6 +165,25 @@ class FactService:
             f.extraction_error = str(exc)
             raise
 
+        return self._apply_extraction(f, extraction, content_hash)
+
+    def _apply_extraction(
+        self,
+        f: ProfileSourceFile,
+        extraction,
+        content_hash: str,
+    ) -> set[int]:
+        f.content_hash = content_hash
+        f.extraction_status = "PENDING"
+        f.extraction_error = ""
+        existing_facts = list(
+            self.session.execute(
+                select(ProfileFact).where(ProfileFact.source_file_id == f.id)
+            ).scalars()
+        )
+        affected_topic_ids = {
+            fact.topic_id for fact in existing_facts if fact.topic_id
+        }
         new_keys: set[str] = set()
         for item in extraction.facts:
             fact_key = item.fact_key or _derive_key(item)

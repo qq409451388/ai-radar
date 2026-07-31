@@ -10,6 +10,10 @@ from ai_radar.bootstrap import seed_default_data
 from ai_radar.config import get_config
 from ai_radar.database import init_db, session_scope
 from ai_radar.models import ProfileSourceFile, SourceItem
+from ai_radar.pipeline_ui import (
+    render_pipeline_launcher,
+    render_pipeline_progress,
+)
 from ai_radar.pipeline_runner import (
     get_active_pipeline_snapshot,
     recover_interrupted_runs,
@@ -30,10 +34,19 @@ st.set_page_config(
 )
 
 
+@st.dialog("更新中心", width="large")
+def render_update_center() -> None:
+    render_pipeline_launcher()
+    st.divider()
+    render_pipeline_progress()
+
+
 def ensure_initialized() -> None:
+    # Additive schema upgrades must run even when Streamlit preserves browser
+    # session state across a code reload.
+    init_db()
     if st.session_state.get("_initialized"):
         return
-    init_db()
     recover_interrupted_runs()
     with session_scope() as session:
         seed_default_data(session)
@@ -97,33 +110,32 @@ def render_sidebar_status() -> None:
         st.caption(f"近 {cfg.score_window_days} 天作为当前跟进窗口")
 
 
-@st.fragment(run_every=2.0)
 def render_sidebar_pipeline_status() -> None:
     snapshot = get_active_pipeline_snapshot()
     if snapshot is None:
-        return
-    current = next(
-        (
-            step
-            for step in snapshot["steps"]
-            if step["key"] == snapshot["current_step"]
-        ),
-        None,
-    )
-    current_label = current["label"] if current else "等待启动"
-    percent = int(snapshot["progress"] * 100)
-    st.markdown(
-        f"""
-        <div class="pipeline-sidebar">
-          <div class="pipeline-sidebar-title">
-            <span>↻ {snapshot['pipeline_label']}</span><span>{percent}%</span>
-          </div>
-          <div class="pipeline-sidebar-detail">{current_label} · 后台运行中</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.progress(snapshot["progress"])
+        label = "↻ 运行 / 重跑更新"
+        help_text = "采集资讯、调用 AI 分析并刷新知识进展"
+    else:
+        current = next(
+            (
+                step
+                for step in snapshot["steps"]
+                if step["key"] == snapshot["current_step"]
+            ),
+            None,
+        )
+        current_label = current["label"] if current else "正在准备"
+        percent = int(snapshot["progress"] * 100)
+        label = f"↻ 更新进行中 · {percent}%"
+        help_text = f"{current_label}，点击查看每一步进度"
+    if st.button(
+        label,
+        width="stretch",
+        key="sidebar_update_center",
+        help=help_text,
+    ):
+        render_update_center()
+    st.caption(help_text)
 
 
 ensure_initialized()
@@ -176,6 +188,7 @@ else:
             "雷达": [
                 home_page,
                 st.Page("pages/inbox.py", title="情报收件箱", icon="📨"),
+                st.Page("pages/sources.py", title="资讯源", icon="🗞️"),
                 st.Page("pages/knowledge.py", title="知识地图", icon="🧭"),
                 st.Page("pages/progress.py", title="我的进展", icon="📈"),
             ],

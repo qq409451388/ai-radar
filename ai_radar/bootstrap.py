@@ -161,6 +161,9 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
             repository="",
             path_filter="",
             enabled=bool(rss.get("enabled", False)),
+            test_status=(
+                "PASSED" if bool(rss.get("enabled", False)) else "UNTESTED"
+            ),
             default_topic_id=topic_id,
         )
         session.add(sc)
@@ -181,6 +184,9 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
                 repository="",
                 path_filter=page.get("path_filter", ""),
                 enabled=bool(page.get("enabled", False)),
+                test_status=(
+                    "PASSED" if bool(page.get("enabled", False)) else "UNTESTED"
+                ),
                 default_topic_id=topic_id,
             )
         )
@@ -200,6 +206,9 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
             repository=gh.get("repository", ""),
             path_filter="",
             enabled=bool(gh.get("enabled", False)),
+            test_status=(
+                "PASSED" if bool(gh.get("enabled", False)) else "UNTESTED"
+            ),
             default_topic_id=topic_id,
         )
         session.add(sc)
@@ -220,6 +229,9 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
                 repository=gh.get("repository", ""),
                 path_filter=gh.get("path_filter", ""),
                 enabled=bool(gh.get("enabled", False)),
+                test_status=(
+                    "PASSED" if bool(gh.get("enabled", False)) else "UNTESTED"
+                ),
                 default_topic_id=topic_id,
             )
         )

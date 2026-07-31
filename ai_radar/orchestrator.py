@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select
@@ -18,7 +19,13 @@ from ai_radar.bootstrap import ANALYZE_FAILED, ANALYZE_PENDING
 from ai_radar.config import get_config
 from ai_radar.database import session_scope
 from ai_radar.llm.client import LlmClient
-from ai_radar.models import ChangePoint, ProfileSourceFile, SourceItem
+from ai_radar.models import (
+    ChangePoint,
+    JobLog,
+    KnowledgeCoverage,
+    ProfileSourceFile,
+    SourceItem,
+)
 from ai_radar.profile.fact_service import FactService
 from ai_radar.profile.sync_service import ProfileSyncService
 from ai_radar.services.analysis_service import AnalysisService
@@ -47,21 +54,131 @@ def collect_one_source(source_config_id: int) -> dict:
         return CollectionService(session).collect_one(source_config_id)
 
 
+def test_source(source_config_id: int) -> dict:
+    with session_scope() as session:
+        return CollectionService(session).test_source(source_config_id)
+
+
 def analyze_pending_items(
     limit: int | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> dict:
-    """Analyze PENDING items.
+    """Analyze one queue batch with concurrent remote AI requests.
 
-    Runs inside a single session; the busy_timeout pragma on the SQLite
-    connection lets concurrent writers (e.g. Streamlit UI) wait instead of
-    failing immediately with "database is locked".
+    Each worker owns its SQLAlchemy session. Results are applied one by one so
+    change-point deduplication stays deterministic even when multiple sources
+    describe the same event.
     """
+    batch_size = limit or get_config().analyze_batch_size
+    now = datetime.now(timezone.utc)
     with session_scope() as session:
-        return AnalysisService(session, LlmClient(session)).analyze_pending(
-            limit=limit,
-            progress_callback=progress_callback,
+        rows = list(
+            session.execute(
+                select(SourceItem.id, SourceItem.title)
+                .where(
+                    or_(
+                        SourceItem.analyze_status == ANALYZE_PENDING,
+                        and_(
+                            SourceItem.analyze_status == ANALYZE_FAILED,
+                            SourceItem.retry_count < 3,
+                            or_(
+                                SourceItem.next_retry_at.is_(None),
+                                SourceItem.next_retry_at <= now,
+                            ),
+                        ),
+                    )
+                )
+                .order_by(
+                    SourceItem.published_at.desc().nullslast(),
+                    SourceItem.collected_at.desc(),
+                )
+                .limit(batch_size)
+            )
         )
+    total = len(rows)
+    if progress_callback:
+        progress_callback(0, total, f"准备并行分析 {total} 条资讯")
+
+    aggregate = {
+        "processed": 0,
+        "success": 0,
+        "ignored": 0,
+        "failed": 0,
+        "new_change_points": 0,
+        "batch_size": batch_size,
+        "concurrency": min(get_config().ai_concurrency, total) if total else 0,
+    }
+    titles = {item_id: title for item_id, title in rows}
+    workers = max(1, min(get_config().ai_concurrency, total or 1))
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="ai-radar-analysis",
+    ) as executor:
+        futures = {
+            executor.submit(_request_item_analysis, item_id): item_id
+            for item_id, _title in rows
+        }
+        for future in as_completed(futures):
+            item_id = futures[future]
+            try:
+                analysis = future.result()
+                with session_scope() as session:
+                    item = session.get(SourceItem, item_id)
+                    if item is None:
+                        raise ValueError(f"source_item {item_id} not found")
+                    outcome = AnalysisService(
+                        session, LlmClient(session)
+                    ).complete_analysis(item, analysis)
+            except Exception as exc:
+                log.warning("analyze item %s failed: %s", item_id, exc)
+                with session_scope() as session:
+                    item = session.get(SourceItem, item_id)
+                    if item is None:
+                        continue
+                    outcome = AnalysisService(
+                        session, LlmClient(session)
+                    ).fail_analysis(item, exc)
+            aggregate["processed"] += 1
+            for key in ("success", "ignored", "failed", "new_change_points"):
+                aggregate[key] += int(outcome.get(key, 0) or 0)
+            if progress_callback:
+                title = (titles.get(item_id) or f"资讯 #{item_id}")[:42]
+                progress_callback(
+                    aggregate["processed"],
+                    total,
+                    f"已完成 {aggregate['processed']}/{total}：{title}",
+                )
+
+    with session_scope() as session:
+        session.add(
+            JobLog(
+                job_type="analyze_items",
+                status="SUCCESS" if not aggregate["failed"] else "PARTIAL",
+                started_at=now,
+                finished_at=datetime.now(timezone.utc),
+                processed_count=aggregate["processed"],
+                success_count=aggregate["success"],
+                failed_count=aggregate["failed"],
+                message=(
+                    f"并行分析 {aggregate['processed']} 条："
+                    f"{aggregate['success']} 成功，"
+                    f"{aggregate['ignored']} 忽略，"
+                    f"{aggregate['failed']} 失败"
+                ),
+            )
+        )
+    return aggregate
+
+
+def _request_item_analysis(source_item_id: int):
+    with session_scope() as session:
+        item = session.get(SourceItem, source_item_id)
+        if item is None:
+            raise ValueError(f"source_item {source_item_id} not found")
+        return AnalysisService(
+            session,
+            LlmClient(independent_persistence=True),
+        ).request_analysis(item)
 
 
 def analyze_all_pending_items(
@@ -186,40 +303,54 @@ def sync_profile(progress_callback: ProgressCallback | None = None) -> dict:
     extraction_failed = 0
     assessment_failed = 0
     if changed:
-        for index, (row, remote) in enumerate(changed, start=1):
-            if progress_callback:
-                file_progress = 20 + int(55 * (index - 1) / len(changed))
-                progress_callback(
-                    file_progress,
-                    100,
-                    f"正在抽取第 {index}/{len(changed)} 个记忆文件：{row.file_path}",
-                )
-            try:
-                with session_scope() as session:
-                    extracted_result = FactService(
-                        session, LlmClient(session)
-                    ).extract_with_content(
-                        row.id, remote.content, remote.content_hash, force=True
-                    )
+        workers = max(1, min(get_config().ai_concurrency, len(changed)))
+        with ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="ai-radar-profile",
+        ) as executor:
+            futures = {
+                executor.submit(
+                    _request_profile_file_extraction_worker,
+                    row.id,
+                    remote.content,
+                ): (row.id, row.file_path, remote.content_hash)
+                for row, remote in changed
+            }
+            for future in as_completed(futures):
+                row_id, file_path, content_hash = futures[future]
+                try:
+                    extraction = future.result()
+                    with session_scope() as session:
+                        extracted_result = FactService(
+                            session,
+                            LlmClient(session),
+                        ).apply_extraction_with_content(
+                            row_id,
+                            content_hash,
+                            extraction,
+                        )
                     affected_topic_ids.update(
                         extracted_result.get("affected_topic_ids", [])
                     )
                     extracted += 1
-            except Exception as exc:
-                log.warning("re-extract %s failed: %s", row.file_path, exc)
-                extraction_failed += 1
-                with session_scope() as session:
-                    failed_row = session.get(ProfileSourceFile, row.id)
-                    if failed_row is not None:
-                        failed_row.extraction_status = "FAILED"
-                        failed_row.extraction_error = f"{type(exc).__name__}: {exc}"
-            if progress_callback:
-                file_progress = 20 + int(55 * index / len(changed))
-                progress_callback(
-                    file_progress,
-                    100,
-                    f"已抽取 {index}/{len(changed)} 个记忆文件",
-                )
+                except Exception as exc:
+                    log.warning("re-extract %s failed: %s", file_path, exc)
+                    extraction_failed += 1
+                    with session_scope() as session:
+                        failed_row = session.get(ProfileSourceFile, row_id)
+                        if failed_row is not None:
+                            failed_row.extraction_status = "FAILED"
+                            failed_row.extraction_error = (
+                                f"{type(exc).__name__}: {exc}"
+                            )
+                completed = extracted + extraction_failed
+                if progress_callback:
+                    file_progress = 20 + int(55 * completed / len(changed))
+                    progress_callback(
+                        file_progress,
+                        100,
+                        f"已抽取 {completed}/{len(changed)} 个记忆文件",
+                    )
 
         # Step 3: only re-assess topics touched by changed facts.
         if affected_topic_ids:
@@ -235,12 +366,21 @@ def sync_profile(progress_callback: ProgressCallback | None = None) -> dict:
                     )
 
                 with session_scope() as session:
-                    CoverageService(
-                        session, LlmClient(session)
-                    ).assess_topics(
-                        affected_topic_ids,
-                        progress_callback=assessment_progress,
+                    change_point_ids = list(
+                        session.scalars(
+                            select(ChangePoint.id).where(
+                                ChangePoint.status == "ACTIVE",
+                                ChangePoint.topic_id.in_(affected_topic_ids),
+                            )
+                        )
                     )
+                assessment = _assess_change_points_concurrently(
+                    change_point_ids,
+                    trigger_type="PROFILE_CHANGED",
+                    job_type="assess_profile_changed",
+                    progress_callback=assessment_progress,
+                )
+                assessment_failed = int(assessment.get("failed", 0) or 0)
             except Exception as exc:
                 log.warning("re-assess after profile sync failed: %s", exc)
                 assessment_failed = 1
@@ -253,6 +393,20 @@ def sync_profile(progress_callback: ProgressCallback | None = None) -> dict:
     return result
 
 
+def _request_profile_file_extraction_worker(
+    profile_file_id: int,
+    content: str,
+):
+    with session_scope() as session:
+        return FactService(
+            session,
+            LlmClient(independent_persistence=True),
+        ).request_extraction_with_content(
+            profile_file_id,
+            content,
+        )
+
+
 def extract_facts(force: bool = False) -> dict:
     with session_scope() as session:
         return FactService(session, LlmClient(session)).extract_all(force=force)
@@ -262,15 +416,125 @@ def assess_new_change_points(
     progress_callback: ProgressCallback | None = None,
 ) -> dict:
     with session_scope() as session:
-        return CoverageService(session, LlmClient(session)).assess_new(
-            progress_callback=progress_callback
+        candidate_ids = list(
+            session.scalars(
+                select(ChangePoint.id)
+                .outerjoin(
+                    KnowledgeCoverage,
+                    KnowledgeCoverage.change_point_id == ChangePoint.id,
+                )
+                .where(
+                    ChangePoint.status == "ACTIVE",
+                    KnowledgeCoverage.id.is_(None),
+                )
+                .order_by(ChangePoint.first_seen_at.desc())
+            )
         )
+    return _assess_change_points_concurrently(
+        candidate_ids,
+        trigger_type="NEW_CHANGE_POINT",
+        job_type="assess_new_change_points",
+        progress_callback=progress_callback,
+    )
 
 
-def assess_all_change_points() -> dict:
+def assess_all_change_points(
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
     with session_scope() as session:
-        return CoverageService(session, LlmClient(session)).assess_all(
-            force=True, trigger_type="MANUAL"
+        candidate_ids = list(
+            session.scalars(
+                select(ChangePoint.id).where(ChangePoint.status == "ACTIVE")
+            )
+        )
+    return _assess_change_points_concurrently(
+        candidate_ids,
+        trigger_type="MANUAL",
+        job_type="assess_all_change_points",
+        progress_callback=progress_callback,
+    )
+
+
+def _assess_change_points_concurrently(
+    change_point_ids: list[int],
+    *,
+    trigger_type: str,
+    job_type: str,
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
+    total = len(change_point_ids)
+    started_at = datetime.now(timezone.utc)
+    if progress_callback:
+        progress_callback(0, total, f"准备并行评估 {total} 个知识点")
+    assessed = 0
+    failed = 0
+    workers = max(1, min(get_config().ai_concurrency, total or 1))
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="ai-radar-coverage",
+    ) as executor:
+        futures = {
+            executor.submit(
+                _assess_change_point_worker,
+                change_point_id,
+                trigger_type,
+            ): change_point_id
+            for change_point_id in change_point_ids
+        }
+        for future in as_completed(futures):
+            change_point_id = futures[future]
+            try:
+                coverage = future.result()
+                with session_scope() as session:
+                    session.add(coverage)
+                assessed += 1
+            except Exception as exc:
+                failed += 1
+                log.warning("assess cp %s failed: %s", change_point_id, exc)
+            completed = assessed + failed
+            if progress_callback:
+                progress_callback(
+                    completed,
+                    total,
+                    f"已完成 {completed}/{total} 个知识点评估",
+                )
+
+    with session_scope() as session:
+        session.add(
+            JobLog(
+                job_type=job_type,
+                status="SUCCESS" if not failed else "PARTIAL",
+                started_at=started_at,
+                finished_at=datetime.now(timezone.utc),
+                processed_count=total,
+                success_count=assessed,
+                failed_count=failed,
+                message=(
+                    f"并行评估 {total} 个知识点："
+                    f"{assessed} 成功，{failed} 失败"
+                ),
+            )
+        )
+    return {
+        "candidates": total,
+        "total": total,
+        "assessed": assessed,
+        "failed": failed,
+        "concurrency": min(get_config().ai_concurrency, total) if total else 0,
+    }
+
+
+def _assess_change_point_worker(
+    change_point_id: int,
+    trigger_type: str,
+) -> KnowledgeCoverage:
+    with session_scope() as session:
+        return CoverageService(
+            session,
+            LlmClient(independent_persistence=True),
+        ).compute_one(
+            change_point_id,
+            trigger_type=trigger_type,
         )
 
 

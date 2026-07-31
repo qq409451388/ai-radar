@@ -77,6 +77,7 @@ class AppConfig:
         github: GithubConfig,
         profile: ProfileConfig,
         analyze_batch_size: int = 30,
+        ai_concurrency: int = 4,
         score_window_days: int = 90,
         max_assessment_facts: int = 24,
         project_root: Path = PROJECT_ROOT,
@@ -92,6 +93,7 @@ class AppConfig:
         self.github = github
         self.profile = profile
         self.analyze_batch_size = analyze_batch_size
+        self.ai_concurrency = max(1, min(8, ai_concurrency))
         self.score_window_days = score_window_days
         self.max_assessment_facts = max_assessment_facts
         self.project_root = project_root
@@ -187,6 +189,13 @@ class AppConfig:
                     30,
                 )
             ),
+            ai_concurrency=_as_int(
+                value(
+                    "app.ai_concurrency",
+                    "AI_RADAR_AI_CONCURRENCY",
+                    4,
+                )
+            ),
             score_window_days=_as_int(
                 value(
                     "app.score_window_days",
@@ -256,6 +265,7 @@ class AppConfig:
                 "scheduler_enabled": self.scheduler_enabled,
                 "http_timeout": self.http_timeout,
                 "analyze_batch_size": self.analyze_batch_size,
+                "ai_concurrency": self.ai_concurrency,
                 "score_window_days": self.score_window_days,
                 "max_assessment_facts": self.max_assessment_facts,
             },

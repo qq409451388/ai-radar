@@ -42,6 +42,7 @@ def test_user_config_yaml_loads_secrets(tmp_path, monkeypatch):
                 "scheduler_enabled": False,
                 "http_timeout": 12,
                 "analyze_batch_size": 18,
+                "ai_concurrency": 6,
                 "score_window_days": 60,
                 "max_assessment_facts": 16,
             },
@@ -57,6 +58,7 @@ def test_user_config_yaml_loads_secrets(tmp_path, monkeypatch):
     assert cfg.profile.token == "secret-gh"
     assert cfg.profile.repo == "owner/private-memory"
     assert cfg.analyze_batch_size == 18
+    assert cfg.ai_concurrency == 6
     assert cfg.is_ready is True
 
 

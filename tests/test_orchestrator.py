@@ -43,8 +43,12 @@ def test_analyze_all_pending_items_drains_queue_in_batches(
 
         monkeypatch.setattr(
             AnalysisService,
-            "_analyze_one",
-            lambda _service, _item: None,
+            "request_analysis",
+            lambda _service, _item: type(
+                "Analysis",
+                (),
+                {"relevant": False},
+            )(),
         )
         progress: list[tuple[int, int, str]] = []
 

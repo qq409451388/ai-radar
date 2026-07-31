@@ -31,5 +31,7 @@ app:
   scheduler_enabled: true
   http_timeout: 20
   analyze_batch_size: 30
+  # Number of independent AI requests allowed within one pipeline stage.
+  ai_concurrency: 4
   score_window_days: 90
   max_assessment_facts: 24

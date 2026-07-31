@@ -100,3 +100,4 @@ def test_build_user_config_preserves_existing_secrets_when_inputs_are_blank():
     }
     assert data["app"]["scheduler_enabled"] is False
     assert data["app"]["http_timeout"] == 35
+    assert data["app"]["ai_concurrency"] == 4

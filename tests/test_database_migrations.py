@@ -43,5 +43,7 @@ def test_signal_columns_are_added_to_existing_database(tmp_path):
         column["name"] for column in inspector.get_columns("change_point")
     }
     assert "path_filter" in source_columns
+    assert "test_status" in source_columns
+    assert "last_tested_at" in source_columns
     assert "signal_type" in change_columns
     assert "followup_snoozed_until" in change_columns
