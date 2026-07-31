@@ -20,8 +20,15 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
-echo ">>> Installing dependencies"
-pip install -q -r requirements.txt
+if ! python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  echo "ERROR: AI Radar requires Python 3.11 or newer."
+  echo "Delete .venv after installing a newer Python, then run ./run.sh again."
+  exit 1
+fi
 
-echo ">>> Starting Streamlit"
-exec streamlit run app.py --server.headless true
+echo ">>> Installing dependencies"
+python -m pip install -q -r requirements.txt
+
+echo ">>> Starting AI Radar"
+echo ">>> Open http://localhost:8501 if the browser does not open automatically."
+exec python -m streamlit run app.py --server.headless true

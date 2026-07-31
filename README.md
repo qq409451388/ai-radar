@@ -4,6 +4,90 @@
 
 新版界面按任务而不是数据库表组织为：今日雷达、情报收件箱、知识地图、我的进展、自动化与设置。默认以最近 90 天为当前跟进窗口，同时保留终身覆盖分数和每次覆盖评估历史。
 
+## 首次使用
+
+只需要安装 Git 和 Python 3.11+，其余工作由启动脚本完成。
+
+### 1. 克隆项目
+
+```bash
+git clone https://github.com/qq409451388/ai-radar.git
+cd ai-radar
+```
+
+### 2. 一键启动
+
+macOS / Linux：
+
+```bash
+./run.sh
+```
+
+如果系统提示没有执行权限，只需执行一次：
+
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+Windows PowerShell：
+
+```powershell
+.\run.bat
+```
+
+Windows CMD：
+
+```bat
+run.bat
+```
+
+也可以在文件管理器中双击 `run.bat`。两个脚本都会自动完成：
+
+1. 创建项目独立的 `.venv` 虚拟环境。
+2. 安装或更新 `requirements.txt` 中的依赖。
+3. 启动 AI Radar。
+
+终端出现启动成功信息后，打开：
+
+```text
+http://localhost:8501
+```
+
+### 3. 完成首次配置
+
+第一次打开会自动进入「平台配置」页面，需要填写：
+
+- OpenAI-compatible API 地址、API Key 和模型名。
+- GitHub Fine-grained Token。
+- 保存 GPT 交流记录的私有仓库，格式为 `owner/repo`。
+- 可选的时区、分析批次和定时任务设置。
+
+点击「保存并进入雷达」后，配置会写入操作系统用户目录，不会写入项目仓库。进入首页后点击「运行今日更新」，系统会开始采集资讯、同步记忆并生成第一批知识变化点。
+
+### 后续启动与更新
+
+后续启动仍然只需要：
+
+```bash
+# macOS / Linux
+./run.sh
+```
+
+```powershell
+# Windows
+.\run.bat
+```
+
+更新项目：
+
+```bash
+git pull
+./run.sh
+```
+
+Windows 更新后运行 `run.bat`。用户配置和 SQLite 数据不会因 `git pull` 被覆盖。按 `Ctrl+C` 可以停止服务。
+
 ```
 Agent 架构与编排       ████████░░ 82%  ↓3
 MCP / Tools / Skills  █████████░ 91%  ↓1
@@ -52,11 +136,14 @@ ai-radar/
 ├── config/
 │   ├── app.example.yaml        不含密钥的用户配置模板
 │   └── default_sources.yaml    默认领域与资讯源
-├── tests/                      pytest 测试（23 项）
-├── requirements.txt / .env.example（仅环境覆盖示例） / run.sh
+├── tests/                      pytest 测试（24 项）
+├── requirements.txt / .env.example（仅环境覆盖示例）
+├── run.sh / run.bat            macOS、Linux、Windows 一键启动
 ```
 
-## 安装步骤
+## 手动安装（高级）
+
+通常不需要执行本节，直接运行 `run.sh` 或 `run.bat` 即可。
 
 ```bash
 cd ai-radar
@@ -64,12 +151,6 @@ python3.11 -m venv .venv          # 或 python3.12
 source .venv/bin/activate
 pip install -r requirements.txt
 streamlit run app.py
-```
-
-或一键启动：
-
-```bash
-./run.sh
 ```
 
 首次启动会自动建表并写入 `config/default_sources.yaml` 中的 8 个领域与默认资讯源，然后进入「平台配置」页面填写 AI API 和 GitHub。
@@ -102,9 +183,9 @@ streamlit run app.py
 
 | 变量 | 说明 |
 | --- | --- |
-| `LLM_BASE_URL` | OpenAI 兼容 API 地址（含 `/chat/completions`） |
+| `LLM_BASE_URL` | OpenAI 兼容 API 根地址（不含 `/chat/completions`） |
 | `LLM_API_KEY` | LLM 密钥 |
-| `LLM_MODEL` | 模型名，默认 `glm-4-plus` |
+| `LLM_MODEL` | 模型名，默认 `qwen-plus` |
 | `LLM_TIMEOUT_SECONDS` | 单次调用超时，默认 120 |
 | `GITHUB_TOKEN` | GitHub Releases 采集用 Token（可选，无则匿名限流） |
 | `PROFILE_GITHUB_REPO` | 记忆仓库 `owner/repo`，如 `owner/private-memory` |
@@ -155,15 +236,11 @@ profile:
 
 - 用 Fine-grained personal access token，仅授权 **记忆仓库** 的 `Contents: Read-only`。
 - 若同时用于 GitHub Releases 采集，则对该仓库加 `Metadata: Read` 即可（公开仓库可不配 Token，但会受匿名限流 60 次/小时）。
-- Token 只能通过环境变量配置，不会写入代码或日志（日志中仅以 `mask_secret` 掩码显示）。
+- Token 通过首次配置页面写入用户配置目录，不会写入代码或日志。
 
-## 启动方式
+## 页面说明
 
-```bash
-streamlit run app.py
-```
-
-打开左侧导航：
+服务启动后，左侧导航包含：
 
 - 「今日雷达」直接查看优先知识缺口并一键运行今日更新。
 - 「情报收件箱」处理知识变化与资讯积压。
@@ -178,11 +255,11 @@ streamlit run app.py
 - 8 个一级领域（Agent 架构与编排、MCP / Tools / Skills、Coding Agent 与 CLI、模型能力与模型路由、Memory / 个人知识库、企业 AI 落地、AI 安全评测与可观测性、Java AI 生态）。
 - 默认资讯源（仅官方博客/GitHub Release；不确定是否有稳定 RSS 的源默认停用）。
 
-可在「资讯源管理」页面新增/编辑/启停，或在 `config/default_sources.yaml` 中调整后重启。
+可在「自动化与设置」的「资讯源」页签中新增、编辑或启停，也可以调整 `config/default_sources.yaml` 后重启。
 
 ## RSS 和 GitHub Release 添加方式
 
-**页面**：「资讯源管理」→ 新增资讯源，填写名称、类型（RSS / GITHUB_RELEASE）、URL、仓库（仅 GitHub Release）、默认领域、启用。
+**页面**：「自动化与设置」→「资讯源」→ 新增来源，填写名称、类型（RSS / GITHUB_RELEASE）、URL、仓库（仅 GitHub Release）和默认领域。
 
 **配置文件**：编辑 `config/default_sources.yaml`：
 
@@ -256,7 +333,7 @@ github_release_sources:
 | GitHub 限流 403/429 | 该来源本次跳过，下次重试；建议配置 `GITHUB_TOKEN` |
 | RSS 源 malformed | feedparser 容错解析，并在日志中告警 |
 | 单个来源采集失败 | 仅记录 `last_error`，不影响其它来源 |
-| 同步失败 | 保留上一次成功的事实，Dashboard 显示失败原因与最后成功时间 |
+| 同步失败 | 保留上一次成功的事实，「今日雷达」显示失败原因与最后成功时间 |
 | 调度器重复启动 | 已用单例 + 锁保护，无需手动处理 |
 
 ## 数据文件位置
@@ -282,7 +359,7 @@ cp data/ai_radar.db data/ai_radar.$(date +%Y%m%d).db
 .venv/bin/python -m pytest -q
 ```
 
-覆盖评分算法、新增知识点致分数下降、DEPRECATED 排除、RSS/GitHub Release 去重、event_key 合并、事实增量抽取与失败重试、证据等级硬约束、覆盖历史保留、LLM 持久缓存、跨平台用户配置与优先级、同步失败保留事实、快照 delta 计算（共 23 项）。
+覆盖评分算法、新增知识点致分数下降、DEPRECATED 排除、RSS/GitHub Release 去重、event_key 合并、SQLite 时区兼容、事实增量抽取与失败重试、证据等级硬约束、覆盖历史保留、LLM 持久缓存、跨平台用户配置与优先级、同步失败保留事实、快照 delta 计算（共 24 项）。
 
 ## 限制与说明
 
