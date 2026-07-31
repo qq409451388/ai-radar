@@ -129,10 +129,31 @@ def render_sidebar_pipeline_status() -> None:
 ensure_initialized()
 maybe_start_scheduler()
 inject_app_styles()
-render_sidebar_status()
 
 cfg = get_config()
 needs_setup = not cfg.config_exists or not cfg.is_ready
+if needs_setup:
+    with st.sidebar:
+        st.markdown(
+            """
+            <div class="radar-brand">
+              <div class="radar-brand-mark">◉</div>
+              <div>
+                <div class="radar-brand-title">AI Radar</div>
+                <div class="radar-brand-subtitle">个人 AI 工程情报系统</div>
+              </div>
+            </div>
+            <div class="setup-sidebar-note">
+              <b>首次设置</b>
+              <span>完成模型和记忆仓库连接后，即可进入今日雷达。</span>
+              <small>🔒 密钥只保存在本机</small>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+else:
+    render_sidebar_status()
+
 home_page = st.Page(
     "pages/home.py",
     title="今日雷达",
@@ -145,18 +166,23 @@ setup_page = st.Page(
     icon="🔐",
     default=needs_setup,
 )
-navigation = st.navigation(
-    {
-        "雷达": [
-            home_page,
-            st.Page("pages/inbox.py", title="情报收件箱", icon="📨"),
-            st.Page("pages/knowledge.py", title="知识地图", icon="🧭"),
-            st.Page("pages/progress.py", title="我的进展", icon="📈"),
-        ],
-        "系统": [
-            setup_page,
-            st.Page("pages/automation.py", title="自动化与设置", icon="⚙️"),
-        ],
-    }
-)
+if needs_setup:
+    # Keep home registered for the wizard's final programmatic redirect, but
+    # hide all navigation until required configuration has been saved.
+    navigation = st.navigation([setup_page, home_page], position="hidden")
+else:
+    navigation = st.navigation(
+        {
+            "雷达": [
+                home_page,
+                st.Page("pages/inbox.py", title="情报收件箱", icon="📨"),
+                st.Page("pages/knowledge.py", title="知识地图", icon="🧭"),
+                st.Page("pages/progress.py", title="我的进展", icon="📈"),
+            ],
+            "系统": [
+                setup_page,
+                st.Page("pages/automation.py", title="自动化与设置", icon="⚙️"),
+            ],
+        }
+    )
 navigation.run()

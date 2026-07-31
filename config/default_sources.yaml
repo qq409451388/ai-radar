@@ -28,6 +28,15 @@ rss_sources:
     default_topic: 模型能力与模型路由
     enabled: false
 
+web_page_sources:
+  # Track official engineering articles, where new design ideas are usually
+  # explained before they become routine release-note items.
+  - name: Anthropic Engineering
+    url: https://www.anthropic.com/engineering
+    path_filter: /engineering/
+    default_topic: Agent 架构与编排
+    enabled: true
+
 github_release_sources:
   - name: OpenAI Codex
     url: https://github.com/openai/codex
@@ -69,6 +78,23 @@ github_release_sources:
     url: https://github.com/langchain4j/langchain4j
     repository: langchain4j/langchain4j
     default_topic: Java AI 生态
+    enabled: true
+
+github_commit_sources:
+  # Watch the specification/documentation paths directly instead of waiting
+  # for a tagged release.
+  - name: Agent Skills Specification
+    url: https://github.com/anthropics/skills/tree/main/spec
+    repository: anthropics/skills
+    path_filter: spec
+    default_topic: MCP / Tools / Skills
+    enabled: true
+
+  - name: MCP Specification
+    url: https://github.com/modelcontextprotocol/modelcontextprotocol
+    repository: modelcontextprotocol/modelcontextprotocol
+    path_filter: schema
+    default_topic: MCP / Tools / Skills
     enabled: true
 
 initial_topics:

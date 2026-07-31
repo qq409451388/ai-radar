@@ -161,6 +161,7 @@ class AnalysisService:
         analysis = self.llm.extract_change_points(
             {
                 "source_name": source_name,
+                "source_type": source.source_type if source else "",
                 "title": item.title,
                 "url": item.url,
                 "published_at": published,
@@ -197,6 +198,7 @@ class AnalysisService:
             summary=summary,
             why_it_matters=analysis.why_it_matters,
             importance=importance,
+            signal_type=analysis.signal_type,
             topic_id=topic_id,
             occurred_at=to_utc(occurred_at),
             source_item_id=item.id,

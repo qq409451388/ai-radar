@@ -7,6 +7,7 @@ import streamlit as st
 from sqlalchemy import func, or_, select
 
 from ai_radar import orchestrator
+from ai_radar.bootstrap import DESIGN_SIGNAL_TYPES
 from ai_radar.config import get_config
 from ai_radar.database import session_scope
 from ai_radar.models import (
@@ -17,7 +18,14 @@ from ai_radar.models import (
     Topic,
 )
 from ai_radar.pipeline_runner import enqueue_pipeline, get_active_pipeline_snapshot
-from ai_radar.ui import fmt_dt, latest_coverage, sources_for_change_point
+from ai_radar.ui import (
+    fmt_dt,
+    latest_coverage,
+    signal_action_hint,
+    signal_sort_key,
+    signal_type_label,
+    sources_for_change_point,
+)
 
 STATUS_LABEL = {
     "PENDING": "待分析",
@@ -47,6 +55,12 @@ def render() -> None:
         source_count = session.scalar(
             select(func.count(SourceConfig.id)).where(SourceConfig.enabled == True)  # noqa: E712
         ) or 0
+        design_count = session.scalar(
+            select(func.count(ChangePoint.id)).where(
+                ChangePoint.status == "ACTIVE",
+                ChangePoint.signal_type.in_(DESIGN_SIGNAL_TYPES),
+            )
+        ) or 0
         oldest_pending = session.scalar(
             select(func.min(SourceItem.published_at)).where(
                 SourceItem.analyze_status == "PENDING"
@@ -55,7 +69,7 @@ def render() -> None:
 
     cols = st.columns(4)
     cols[0].metric("待分析", counts.get("PENDING", 0))
-    cols[1].metric("已提炼", counts.get("SUCCESS", 0))
+    cols[1].metric("设计信号", design_count)
     cols[2].metric("自动过滤", counts.get("IGNORED", 0))
     cols[3].metric("启用来源", source_count)
 
@@ -84,10 +98,17 @@ def render() -> None:
             "归档只改变处理状态，不删除原始数据。"
         )
 
-    tab_changes, tab_queue, tab_done = st.tabs(
-        ["知识变化", f"待处理队列 · {counts.get('PENDING', 0)}", "已处理与失败"]
+    tab_design, tab_changes, tab_queue, tab_done = st.tabs(
+        [
+            f"设计信号 · {design_count}",
+            "全部变化",
+            f"待处理队列 · {counts.get('PENDING', 0)}",
+            "已处理与失败",
+        ]
     )
 
+    with tab_design:
+        _render_changes(design_only=True)
     with tab_changes:
         _render_changes()
     with tab_queue:
@@ -96,7 +117,7 @@ def render() -> None:
         _render_items(statuses=["SUCCESS", "IGNORED", "FAILED"])
 
 
-def _render_changes() -> None:
+def _render_changes(design_only: bool = False) -> None:
     range_label = st.segmented_control(
         "时间范围",
         ["7 天", "30 天", "全部"],
@@ -111,11 +132,18 @@ def _render_changes() -> None:
             .order_by(ChangePoint.importance.desc(), ChangePoint.first_seen_at.desc())
         )
         if days:
-            stmt = stmt.where(
-                ChangePoint.first_seen_at
-                >= datetime.now(timezone.utc) - timedelta(days=days)
+            date_column = (
+                ChangePoint.last_seen_at
+                if design_only
+                else ChangePoint.first_seen_at
             )
+            stmt = stmt.where(
+                date_column >= datetime.now(timezone.utc) - timedelta(days=days)
+            )
+        if design_only:
+            stmt = stmt.where(ChangePoint.signal_type.in_(DESIGN_SIGNAL_TYPES))
         cps = list(session.execute(stmt).scalars())
+        cps.sort(key=signal_sort_key, reverse=True)
         topic_names = {
             topic.id: topic.name
             for topic in session.execute(select(Topic)).scalars()
@@ -130,6 +158,7 @@ def _render_changes() -> None:
                 title_col, meta_col = st.columns([4, 1.2])
                 title_col.markdown(f"### {cp.title}")
                 meta_col.markdown(
+                    f"`{signal_type_label(cp.signal_type)}`  \n"
                     f"`重要度 {cp.importance}`  \n"
                     f"`{level}`"
                 )
@@ -140,7 +169,10 @@ def _render_changes() -> None:
                 st.write(cp.summary or "暂无摘要")
                 if cp.why_it_matters:
                     st.info(cp.why_it_matters, icon="💡")
+                st.caption(f"建议下一步：{signal_action_hint(cp.signal_type)}")
                 sources = sources_for_change_point(session, cp.id)
+                if len(sources) >= 2:
+                    st.success(f"已有 {len(sources)} 个来源共同确认这个变化。")
                 if sources:
                     st.markdown(
                         " · ".join(

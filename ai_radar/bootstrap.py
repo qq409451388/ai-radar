@@ -48,7 +48,35 @@ EVIDENCE_TYPES = {
 
 # ----- Source types -----
 SOURCE_TYPE_RSS = "RSS"
+SOURCE_TYPE_WEB_PAGE = "WEB_PAGE"
 SOURCE_TYPE_GITHUB_RELEASE = "GITHUB_RELEASE"
+SOURCE_TYPE_GITHUB_COMMIT = "GITHUB_COMMIT"
+
+# ----- Intelligence signal types -----
+SIGNAL_RELEASE = "RELEASE"
+SIGNAL_CAPABILITY = "CAPABILITY"
+SIGNAL_CONCEPT = "CONCEPT"
+SIGNAL_ARCHITECTURE = "ARCHITECTURE"
+SIGNAL_STANDARD = "STANDARD"
+VALID_SIGNAL_TYPES = {
+    SIGNAL_RELEASE,
+    SIGNAL_CAPABILITY,
+    SIGNAL_CONCEPT,
+    SIGNAL_ARCHITECTURE,
+    SIGNAL_STANDARD,
+}
+DESIGN_SIGNAL_TYPES = {
+    SIGNAL_CONCEPT,
+    SIGNAL_ARCHITECTURE,
+    SIGNAL_STANDARD,
+}
+SIGNAL_PRIORITY = {
+    SIGNAL_RELEASE: 1,
+    SIGNAL_CAPABILITY: 2,
+    SIGNAL_CONCEPT: 3,
+    SIGNAL_ARCHITECTURE: 4,
+    SIGNAL_STANDARD: 5,
+}
 
 # ----- Statuses -----
 STATUS_ACTIVE = "ACTIVE"
@@ -131,10 +159,31 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
             source_type=SOURCE_TYPE_RSS,
             url=rss["url"],
             repository="",
+            path_filter="",
             enabled=bool(rss.get("enabled", False)),
             default_topic_id=topic_id,
         )
         session.add(sc)
+        existing_source_keys.add(key)
+        created["sources"] += 1
+
+    # ----- Official web article indexes / watched pages -----
+    for page in data.get("web_page_sources", []):
+        key = (SOURCE_TYPE_WEB_PAGE, page["url"])
+        if key in existing_source_keys:
+            continue
+        topic_id = _resolve_topic_id(page.get("default_topic", ""))
+        session.add(
+            SourceConfig(
+                name=page["name"],
+                source_type=SOURCE_TYPE_WEB_PAGE,
+                url=page["url"],
+                repository="",
+                path_filter=page.get("path_filter", ""),
+                enabled=bool(page.get("enabled", False)),
+                default_topic_id=topic_id,
+            )
+        )
         existing_source_keys.add(key)
         created["sources"] += 1
 
@@ -149,10 +198,31 @@ def seed_default_data(session: Session, force: bool = False) -> dict:
             source_type=SOURCE_TYPE_GITHUB_RELEASE,
             url=gh["url"],
             repository=gh.get("repository", ""),
+            path_filter="",
             enabled=bool(gh.get("enabled", False)),
             default_topic_id=topic_id,
         )
         session.add(sc)
+        existing_source_keys.add(key)
+        created["sources"] += 1
+
+    # ----- GitHub specification/document commit sources -----
+    for gh in data.get("github_commit_sources", []):
+        key = (SOURCE_TYPE_GITHUB_COMMIT, gh["url"])
+        if key in existing_source_keys:
+            continue
+        topic_id = _resolve_topic_id(gh.get("default_topic", ""))
+        session.add(
+            SourceConfig(
+                name=gh["name"],
+                source_type=SOURCE_TYPE_GITHUB_COMMIT,
+                url=gh["url"],
+                repository=gh.get("repository", ""),
+                path_filter=gh.get("path_filter", ""),
+                enabled=bool(gh.get("enabled", False)),
+                default_topic_id=topic_id,
+            )
+        )
         existing_source_keys.add(key)
         created["sources"] += 1
 

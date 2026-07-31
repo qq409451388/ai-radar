@@ -26,3 +26,22 @@ def test_importance_is_normalized(raw, expected):
         {"relevant": True, "importance": raw}
     )
     assert result.importance == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("standard", "STANDARD"),
+        ("ARCHITECTURE", "ARCHITECTURE"),
+        ("concept", "CONCEPT"),
+        ("capability", "CAPABILITY"),
+        ("release", "RELEASE"),
+        ("marketing", "RELEASE"),
+        (None, "RELEASE"),
+    ],
+)
+def test_signal_type_is_normalized(raw, expected):
+    result = ChangePointAnalysis.model_validate(
+        {"relevant": True, "signal_type": raw}
+    )
+    assert result.signal_type == expected

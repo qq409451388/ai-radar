@@ -56,6 +56,7 @@ class LlmClient:
     def extract_change_points(self, item_payload: dict) -> ChangePointAnalysis:
         prompt = prompts.render_analyze(
             source_name=item_payload["source_name"],
+            source_type=item_payload.get("source_type", ""),
             title=item_payload["title"],
             url=item_payload["url"],
             published_at=item_payload["published_at"],

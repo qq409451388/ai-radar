@@ -8,9 +8,16 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ai_radar.bootstrap import SOURCE_TYPE_GITHUB_RELEASE, SOURCE_TYPE_RSS
+from ai_radar.bootstrap import (
+    SOURCE_TYPE_GITHUB_COMMIT,
+    SOURCE_TYPE_GITHUB_RELEASE,
+    SOURCE_TYPE_RSS,
+    SOURCE_TYPE_WEB_PAGE,
+)
+from ai_radar.collectors.github_commit import GitHubCommitCollector
 from ai_radar.collectors.github_release import GitHubReleaseCollector
 from ai_radar.collectors.rss import RSSCollector
+from ai_radar.collectors.web_page import WebPageCollector
 from ai_radar.models import SourceConfig, SourceItem
 from ai_radar.repositories.job_log import job_log
 from ai_radar.utils import sha256_hex
@@ -83,9 +90,18 @@ class CollectionService:
     def _collect_one(self, cfg: SourceConfig) -> tuple[int, int]:
         if cfg.source_type == SOURCE_TYPE_RSS:
             collector = RSSCollector(cfg.name, cfg.url)
+        elif cfg.source_type == SOURCE_TYPE_WEB_PAGE:
+            collector = WebPageCollector(cfg.name, cfg.url, cfg.path_filter)
         elif cfg.source_type == SOURCE_TYPE_GITHUB_RELEASE:
             repo = cfg.repository or _repo_from_url(cfg.url)
             collector = GitHubReleaseCollector(cfg.name, repo)
+        elif cfg.source_type == SOURCE_TYPE_GITHUB_COMMIT:
+            repo = cfg.repository or _repo_from_url(cfg.url)
+            collector = GitHubCommitCollector(
+                cfg.name,
+                repo,
+                cfg.path_filter,
+            )
         else:
             log.warning("unknown source_type %s for %s", cfg.source_type, cfg.name)
             return 0, 0

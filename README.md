@@ -167,7 +167,8 @@ streamlit run app.py
 | Windows | `%APPDATA%\AI Radar\config.yaml` |
 | Linux | `~/.config/ai-radar/config.yaml` |
 
-- 首次进入会自动打开「平台配置」页面。
+- 首次进入会自动打开 4 步配置向导，依次引导连接 AI 模型、GitHub
+  记忆仓库、选择运行偏好并检查保存；完成前不会开放其他任务页面。
 - 仓库只包含不带密钥的 `config/app.example.yaml`。
 - 配置文件以仅当前用户可读写的权限创建（支持该权限模型的平台上为 `0600`）。
 - 检测到旧项目 `.env` 时，会只读加载已有值；在配置页保存后写入用户配置文件。旧 `.env` 不会自动删除。
@@ -244,8 +245,8 @@ profile:
 
 服务启动后，左侧导航包含：
 
-- 「今日雷达」直接查看优先知识缺口并一键运行今日更新。
-- 「情报收件箱」处理知识变化与资讯积压。
+- 「今日雷达」优先展示新概念、架构和标准信号，同时查看知识缺口并一键运行今日更新。
+- 「情报收件箱」将设计信号与常规版本动态分流，原始资讯仍可完整追溯。
 - 「知识地图」查看评分依据、官方来源和覆盖变化历史。
 - 「我的进展」查看 GPT 记忆抽取出的研究、设计、实现和生产证据。
 - 「自动化与设置」管理任务、资讯源、Token 用量与响应缓存。
@@ -265,13 +266,26 @@ profile:
 首次启动自动写入：
 
 - 8 个一级领域（Agent 架构与编排、MCP / Tools / Skills、Coding Agent 与 CLI、模型能力与模型路由、Memory / 个人知识库、企业 AI 落地、AI 安全评测与可观测性、Java AI 生态）。
-- 默认资讯源（仅官方博客/GitHub Release；不确定是否有稳定 RSS 的源默认停用）。
+- 默认资讯源只使用官方渠道，包括 RSS、工程文章页、GitHub Release，
+  以及规范/文档目录的 GitHub Commit。
+
+情报分析会将变化分为五类：
+
+- `STANDARD`：协议、开放标准和互操作规范。
+- `ARCHITECTURE`：新的系统架构和设计模式。
+- `CONCEPT`：值得持续跟踪的新抽象或方法论。
+- `CAPABILITY`：需要实际验证的新能力。
+- `RELEASE`：常规版本、升级、修复和体验改进。
+
+首页优先展示前三类“设计信号”，版本动态不会丢失，但默认留在收件箱中。
 
 可在「自动化与设置」的「资讯源」页签中新增、编辑或启停，也可以调整 `config/default_sources.yaml` 后重启。
 
 ## RSS 和 GitHub Release 添加方式
 
-**页面**：「自动化与设置」→「资讯源」→ 新增来源，填写名称、类型（RSS / GITHUB_RELEASE）、URL、仓库（仅 GitHub Release）和默认领域。
+**页面**：「自动化与设置」→「资讯源」→ 新增来源，支持
+`RSS`、`WEB_PAGE`、`GITHUB_RELEASE`、`GITHUB_COMMIT`。网页来源可以填写文章
+链接路径片段；GitHub Commit 来源可以限定 `docs`、`spec`、`schema` 等目录。
 
 **配置文件**：编辑 `config/default_sources.yaml`：
 

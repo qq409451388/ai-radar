@@ -320,13 +320,24 @@ def _render_sources() -> None:
 
         st.markdown("### 新增来源")
         with st.form("new_source", border=True):
-            cols = st.columns([1.2, 1, 2, 1.5])
+            cols = st.columns([1.2, 1.15, 2, 1.4])
             name = cols[0].text_input("名称")
             source_type = cols[1].selectbox(
-                "类型", ["RSS", "GITHUB_RELEASE"]
+                "类型",
+                ["RSS", "WEB_PAGE", "GITHUB_RELEASE", "GITHUB_COMMIT"],
             )
             url = cols[2].text_input("URL")
-            repository = cols[3].text_input("owner/repo（可选）")
+            repository = cols[3].text_input(
+                "owner/repo（GitHub 类型）",
+                help="GitHub 类型可填写 owner/repo；留空时会尝试从 URL 推断。",
+            )
+            path_filter = st.text_input(
+                "路径过滤（可选）",
+                help=(
+                    "WEB_PAGE 填文章链接路径片段，例如 /engineering/；"
+                    "GITHUB_COMMIT 填要监控的 docs、spec 或 schema 目录。"
+                ),
+            )
             topic_id = st.selectbox(
                 "默认领域",
                 [topic.id for topic in topics],
@@ -342,6 +353,7 @@ def _render_sources() -> None:
                             source_type=source_type,
                             url=url.strip(),
                             repository=repository.strip(),
+                            path_filter=path_filter.strip(),
                             enabled=True,
                             default_topic_id=topic_id,
                         )
@@ -355,6 +367,8 @@ def _render_sources() -> None:
                 cols[0].markdown(f"**{source.name}**")
                 cols[0].caption(source.url)
                 cols[1].caption(source.source_type)
+                if source.path_filter:
+                    cols[1].caption(f"过滤：{source.path_filter}")
                 cols[2].caption(topic_names.get(source.default_topic_id, "未分类"))
                 cols[3].caption(f"采集 {fmt_dt(source.last_collected_at)}")
                 enabled = cols[4].toggle(

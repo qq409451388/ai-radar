@@ -8,6 +8,13 @@ from pydantic import BaseModel, Field, field_validator
 
 # Valid enum-ish literals
 ImportanceLiteral = Literal[1, 3, 5]
+SignalTypeLiteral = Literal[
+    "RELEASE",
+    "CAPABILITY",
+    "CONCEPT",
+    "ARCHITECTURE",
+    "STANDARD",
+]
 EvidenceLiteral = Literal[
     "DISCUSSION",
     "RESEARCH",
@@ -35,6 +42,7 @@ class ChangePointAnalysis(BaseModel):
     summary: str = ""
     why_it_matters: str = ""
     importance: ImportanceLiteral = 1
+    signal_type: SignalTypeLiteral = "RELEASE"
     occurred_at: str | None = Field(default=None, description="ISO date YYYY-MM-DD or null")
     duplicate_keywords: list[str] = Field(default_factory=list)
 
@@ -51,6 +59,20 @@ class ChangePointAnalysis(BaseModel):
         if numeric <= 3:
             return 3
         return 5
+
+    @field_validator("signal_type", mode="before")
+    @classmethod
+    def _normalize_signal_type(cls, value):
+        normalized = str(value or "RELEASE").strip().upper()
+        if normalized in {
+            "RELEASE",
+            "CAPABILITY",
+            "CONCEPT",
+            "ARCHITECTURE",
+            "STANDARD",
+        }:
+            return normalized
+        return "RELEASE"
 
 
 class ProfileFactItem(BaseModel):

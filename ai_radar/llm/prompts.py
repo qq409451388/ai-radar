@@ -29,6 +29,18 @@ ANALYZE_PROMPT = dedent(
 
     重点关注：Agent、MCP、Skills、Tools、Memory、多 Agent、模型路由、Coding Agent、CLI、Java AI、企业落地、安全、评测、可观测性、模型工具调用、长上下文、重要定价/额度变化。
 
+    signal_type 必须从以下类型中选择：
+    - STANDARD：首次提出或实质修改协议、开放标准、规范、互操作格式
+    - ARCHITECTURE：新的系统架构、编排方式、上下文/记忆/安全设计模式
+    - CONCEPT：值得命名和持续跟踪的新抽象、新术语、新方法论
+    - CAPABILITY：产品或模型获得值得实际验证的新能力
+    - RELEASE：常规版本发布、升级、修复、性能或体验改进
+
+    判断原则：
+    - 文章标题含版本号并不必然是 RELEASE；若核心是新架构或新标准，使用对应类型。
+    - 单纯增加参数、支持平台、修复问题通常是 RELEASE。
+    - 不要因为营销文案自称“全新范式”就判为 CONCEPT，必须说明它解决的旧问题和新抽象。
+
     importance 取值：1（普通版本更新/小功能）、3（值得关注的新产品/新能力/新工具）、5（行业标准、重大架构变化、重要产品转型）。
     event_key 用小写、点分层级，例如：coding-agent.trae-work.agent-mode。
 
@@ -41,12 +53,14 @@ ANALYZE_PROMPT = dedent(
       "summary": "摘要",
       "why_it_matters": "为什么重要",
       "importance": 3,
+      "signal_type": "ARCHITECTURE",
       "occurred_at": "2026-07-30",
       "duplicate_keywords": ["关键词1", "关键词2"]
     }}
 
     ---
     资讯来源：{source_name}
+    来源类型：{source_type}
     标题：{title}
     链接：{url}
     发布时间：{published_at}
@@ -131,10 +145,18 @@ ASSESS_COVERAGE_PROMPT = dedent(
 ).strip()
 
 
-def render_analyze(source_name: str, title: str, url: str, published_at: str, content: str) -> str:
+def render_analyze(
+    source_name: str,
+    source_type: str,
+    title: str,
+    url: str,
+    published_at: str,
+    content: str,
+) -> str:
     return ANALYZE_PROMPT.format(
         topics=TOPICS_BLOCK,
         source_name=source_name,
+        source_type=source_type,
         title=title,
         url=url,
         published_at=published_at,

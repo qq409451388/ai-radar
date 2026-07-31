@@ -7,10 +7,17 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from ai_radar.bootstrap import SOURCE_TYPE_GITHUB_RELEASE, SOURCE_TYPE_RSS
+from ai_radar.bootstrap import (
+    SOURCE_TYPE_GITHUB_COMMIT,
+    SOURCE_TYPE_GITHUB_RELEASE,
+    SOURCE_TYPE_RSS,
+    SOURCE_TYPE_WEB_PAGE,
+)
 from ai_radar.collectors.base import CollectedItem
+from ai_radar.collectors.github_commit import GitHubCommitCollector
 from ai_radar.collectors.github_release import GitHubReleaseCollector
 from ai_radar.collectors.rss import RSSCollector
+from ai_radar.collectors.web_page import WebPageCollector
 from ai_radar.models import (
     ChangePoint,
     ChangePointSource,
@@ -114,6 +121,36 @@ def test_github_release_dedup(session):
     assert len(items) == 1
 
 
+@pytest.mark.parametrize(
+    ("source_type", "collector_cls", "path_filter"),
+    [
+        (SOURCE_TYPE_WEB_PAGE, WebPageCollector, "/engineering/"),
+        (SOURCE_TYPE_GITHUB_COMMIT, GitHubCommitCollector, "spec"),
+    ],
+)
+def test_design_source_types_are_routed(
+    session,
+    source_type,
+    collector_cls,
+    path_filter,
+):
+    source = SourceConfig(
+        name="design",
+        source_type=source_type,
+        url="https://github.com/o/r",
+        repository="o/r",
+        path_filter=path_filter,
+        enabled=True,
+    )
+    session.add(source)
+    session.flush()
+
+    with patch.object(collector_cls, "collect", return_value=[_item("design-1")]):
+        new, seen = CollectionService(session)._collect_one(source)
+
+    assert (new, seen) == (1, 1)
+
+
 # --- Test 6: event_key merge ---
 
 def test_event_key_merge(session):
@@ -164,6 +201,7 @@ def test_event_key_merge(session):
         summary="s2",
         why_it_matters="",
         importance=5,
+        signal_type="STANDARD",
         topic_id=topic.id,
         occurred_at=None,
         source_item_id=item2.id,
@@ -171,6 +209,7 @@ def test_event_key_merge(session):
     )
     assert cp1.id == cp2.id  # merged into the same change point
     assert cp2.importance == 5  # importance promoted
+    assert cp2.signal_type == "STANDARD"
     links = list(
         session.execute(
             select(ChangePointSource).where(ChangePointSource.change_point_id == cp2.id)
@@ -259,4 +298,5 @@ def test_analysis_fills_missing_relevant_fields(session):
     assert cp.summary == "Original source summary"
     assert cp.event_key.startswith("source-item.")
     assert cp.importance == 1
+    assert cp.signal_type == "RELEASE"
     assert cp.topic_id == topic.id

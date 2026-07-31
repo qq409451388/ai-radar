@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ai_radar.bootstrap import (
     COVERAGE_NONE,
+    SIGNAL_PRIORITY,
     STATUS_ACTIVE,
 )
 from ai_radar.models import (
@@ -50,6 +51,41 @@ def coverage_color(level: str) -> str:
 
 def importance_label(importance: int) -> str:
     return {1: "普通", 3: "关注", 5: "重大"}.get(importance, str(importance))
+
+
+def signal_type_label(signal_type: str) -> str:
+    return {
+        "STANDARD": "标准 / 协议",
+        "ARCHITECTURE": "架构设计",
+        "CONCEPT": "新概念",
+        "CAPABILITY": "新能力",
+        "RELEASE": "版本动态",
+    }.get(signal_type, signal_type or "版本动态")
+
+
+def signal_action_hint(signal_type: str) -> str:
+    return {
+        "STANDARD": "阅读规范并检查兼容性影响",
+        "ARCHITECTURE": "对比旧方案并画出核心机制",
+        "CONCEPT": "确认定义、边界和真实使用场景",
+        "CAPABILITY": "用最小任务验证能力与限制",
+        "RELEASE": "按需查看升级与兼容性变化",
+    }.get(signal_type, "阅读来源并形成研究记录")
+
+
+def signal_sort_key(change_point: ChangePoint) -> tuple[int, int, float]:
+    seen_at = change_point.first_seen_at
+    if seen_at is None:
+        seen_timestamp = 0.0
+    else:
+        if seen_at.tzinfo is None:
+            seen_at = seen_at.replace(tzinfo=timezone.utc)
+        seen_timestamp = seen_at.timestamp()
+    return (
+        SIGNAL_PRIORITY.get(change_point.signal_type, 0),
+        change_point.importance,
+        seen_timestamp,
+    )
 
 
 def all_topics(session: Session) -> list[Topic]:

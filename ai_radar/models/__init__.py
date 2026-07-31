@@ -51,9 +51,14 @@ class SourceConfig(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    source_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)  # RSS / GITHUB_RELEASE
+    source_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True
+    )  # RSS / WEB_PAGE / GITHUB_RELEASE / GITHUB_COMMIT
     url: Mapped[str] = mapped_column(String(512), nullable=False)
     repository: Mapped[str] = mapped_column(String(256), default="", server_default="")
+    path_filter: Mapped[str] = mapped_column(
+        String(512), default="", server_default=""
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", index=True)
     default_topic_id: Mapped[int | None] = mapped_column(
         ForeignKey("topic.id", ondelete="SET NULL"), nullable=True, index=True
@@ -118,6 +123,9 @@ class ChangePoint(Base):
     summary: Mapped[str] = mapped_column(Text, default="", server_default="")
     why_it_matters: Mapped[str] = mapped_column(Text, default="", server_default="")
     importance: Mapped[int] = mapped_column(Integer, default=1, server_default="1", index=True)  # 1/3/5
+    signal_type: Mapped[str] = mapped_column(
+        String(32), default="RELEASE", server_default="RELEASE", index=True
+    )
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     status: Mapped[str] = mapped_column(
         String(16), default="ACTIVE", server_default="ACTIVE", index=True

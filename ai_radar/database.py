@@ -86,6 +86,9 @@ def init_db() -> None:
 
 def _apply_additive_migrations(engine: Engine) -> None:
     additions: dict[str, dict[str, str]] = {
+        "source_config": {
+            "path_filter": "VARCHAR(512) NOT NULL DEFAULT ''",
+        },
         "source_item": {
             "retry_count": "INTEGER NOT NULL DEFAULT 0",
             "next_retry_at": "DATETIME",
@@ -105,6 +108,9 @@ def _apply_additive_migrations(engine: Engine) -> None:
             "recent_score": "FLOAT NOT NULL DEFAULT 0",
             "important_gap_count": "INTEGER NOT NULL DEFAULT 0",
             "practiced_rate": "FLOAT NOT NULL DEFAULT 0",
+        },
+        "change_point": {
+            "signal_type": "VARCHAR(32) NOT NULL DEFAULT 'RELEASE'",
         },
     }
     inspector = inspect(engine)

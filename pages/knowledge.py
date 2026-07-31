@@ -15,7 +15,13 @@ from ai_radar.models import (
     ProfileSourceFile,
     Topic,
 )
-from ai_radar.ui import fmt_dt, latest_coverage, sources_for_change_point
+from ai_radar.ui import (
+    fmt_dt,
+    latest_coverage,
+    signal_sort_key,
+    signal_type_label,
+    sources_for_change_point,
+)
 from ai_radar.utils import load_json
 
 LEVEL_LABEL = {
@@ -41,7 +47,7 @@ def render() -> None:
         )
         topic_names = {topic.id: topic.name for topic in topics}
 
-        filters = st.columns([1.3, 1.2, 1, 2.1])
+        filters = st.columns([1.2, 1.1, 1, 1.25, 1.8])
         selected_topic = filters[0].selectbox(
             "领域",
             [None] + [topic.id for topic in topics],
@@ -61,13 +67,22 @@ def render() -> None:
             [None, 5, 3, 1],
             format_func=lambda value: "全部" if value is None else str(value),
         )
-        keyword = filters[3].text_input("搜索知识变化")
+        selected_signal = filters[3].selectbox(
+            "信号类型",
+            [None, "STANDARD", "ARCHITECTURE", "CONCEPT", "CAPABILITY", "RELEASE"],
+            format_func=lambda value: "全部类型"
+            if value is None
+            else signal_type_label(value),
+        )
+        keyword = filters[4].text_input("搜索知识变化")
 
         stmt = select(ChangePoint).where(ChangePoint.status == "ACTIVE")
         if selected_topic is not None:
             stmt = stmt.where(ChangePoint.topic_id == selected_topic)
         if selected_importance is not None:
             stmt = stmt.where(ChangePoint.importance == selected_importance)
+        if selected_signal is not None:
+            stmt = stmt.where(ChangePoint.signal_type == selected_signal)
         if keyword:
             like = f"%{keyword}%"
             stmt = stmt.where(
@@ -85,6 +100,7 @@ def render() -> None:
                 )
             ).scalars()
         )
+        cps.sort(key=signal_sort_key, reverse=True)
         if selected_level is not None:
             cps = [
                 cp
@@ -119,11 +135,12 @@ def render() -> None:
                 f"{'●' if cp.importance == 5 else '◆' if cp.importance == 3 else '·'} "
                 f"{cp.title} · {LEVEL_LABEL[level]}"
             ):
-                meta_cols = st.columns([2.4, 1, 1, 1])
+                meta_cols = st.columns([2.1, 1.1, 1, 1, 1])
                 meta_cols[0].caption(topic_names.get(cp.topic_id, "未分类"))
-                meta_cols[1].caption(f"重要度 {cp.importance}")
-                meta_cols[2].caption(f"发现 {fmt_dt(cp.first_seen_at)}")
-                meta_cols[3].markdown(
+                meta_cols[1].caption(signal_type_label(cp.signal_type))
+                meta_cols[2].caption(f"重要度 {cp.importance}")
+                meta_cols[3].caption(f"发现 {fmt_dt(cp.first_seen_at)}")
+                meta_cols[4].markdown(
                     f'<span class="pill {level.lower()}">{LEVEL_LABEL[level]}</span>',
                     unsafe_allow_html=True,
                 )
@@ -204,6 +221,21 @@ def render() -> None:
                         new_importance = st.select_slider(
                             "重要度", options=[1, 3, 5], value=cp.importance
                         )
+                        signal_options = [
+                            "STANDARD",
+                            "ARCHITECTURE",
+                            "CONCEPT",
+                            "CAPABILITY",
+                            "RELEASE",
+                        ]
+                        new_signal_type = st.selectbox(
+                            "信号类型",
+                            signal_options,
+                            index=signal_options.index(cp.signal_type)
+                            if cp.signal_type in signal_options
+                            else len(signal_options) - 1,
+                            format_func=signal_type_label,
+                        )
                         new_status = st.selectbox(
                             "状态",
                             ["ACTIVE", "DEPRECATED"],
@@ -211,6 +243,7 @@ def render() -> None:
                         )
                         if st.form_submit_button("保存调整"):
                             cp.importance = new_importance
+                            cp.signal_type = new_signal_type
                             cp.status = new_status
                             st.success("已保存。该调整会影响后续评分。")
                 st.caption(f"event_key · {escape(cp.event_key)}")

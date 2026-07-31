@@ -5,8 +5,9 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 
 import streamlit as st
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
+from ai_radar.bootstrap import DESIGN_SIGNAL_TYPES
 from ai_radar.config import get_config
 from ai_radar.database import session_scope
 from ai_radar.models import (
@@ -22,7 +23,14 @@ from ai_radar.pipeline_runner import (
     get_active_pipeline_snapshot,
 )
 from ai_radar.services.scoring_service import ScoringService
-from ai_radar.ui import fmt_dt, latest_coverage
+from ai_radar.ui import (
+    fmt_dt,
+    latest_coverage,
+    signal_action_hint,
+    signal_sort_key,
+    signal_type_label,
+    sources_for_change_point,
+)
 
 
 def _metric_card(label: str, value: str, detail: str, tone: str = "") -> None:
@@ -65,13 +73,20 @@ def render() -> None:
                 select(ChangePoint)
                 .where(
                     ChangePoint.status == "ACTIVE",
-                    ChangePoint.first_seen_at >= recent_cutoff,
+                    or_(
+                        ChangePoint.first_seen_at >= recent_cutoff,
+                        (
+                            ChangePoint.signal_type.in_(DESIGN_SIGNAL_TYPES)
+                            & (ChangePoint.last_seen_at >= recent_cutoff)
+                        ),
+                    ),
                 )
                 .order_by(
                     ChangePoint.importance.desc(), ChangePoint.first_seen_at.desc()
                 )
             ).scalars()
         )
+        recent_cps.sort(key=signal_sort_key, reverse=True)
         topics = list(
             session.execute(
                 select(Topic).where(Topic.enabled == True).order_by(Topic.id)  # noqa: E712
@@ -80,8 +95,26 @@ def render() -> None:
         health = ScoringService(session).compute_all_topic_health()
         topic_names = {topic.id: topic.name for topic in topics}
         gaps = []
+        design_signals = []
         for cp in recent_cps:
             cov = latest_coverage(session, cp.id)
+            if cp.signal_type in DESIGN_SIGNAL_TYPES:
+                design_signals.append(
+                    {
+                        "id": cp.id,
+                        "title": cp.title,
+                        "summary": cp.summary,
+                        "why": cp.why_it_matters,
+                        "importance": cp.importance,
+                        "signal_type": cp.signal_type,
+                        "topic": topic_names.get(cp.topic_id, "未分类"),
+                        "level": cov.coverage_level if cov else "NONE",
+                        "first_seen": cp.first_seen_at,
+                        "source_count": len(
+                            sources_for_change_point(session, cp.id)
+                        ),
+                    }
+                )
             if cp.importance >= 3 and (
                 cov is None or cov.coverage_level in ("NONE", "AWARE")
             ):
@@ -91,6 +124,7 @@ def render() -> None:
                         "title": cp.title,
                         "summary": cp.summary,
                         "importance": cp.importance,
+                        "signal_type": cp.signal_type,
                         "topic": topic_names.get(cp.topic_id, "未分类"),
                         "level": cov.coverage_level if cov else "NONE",
                         "first_seen": cp.first_seen_at,
@@ -173,10 +207,10 @@ def render() -> None:
         )
     with cols[2]:
         _metric_card(
-            "已实践变化点",
-            str(practiced_points),
-            "有 Demo、实现或生产证据",
-            "good",
+            "设计信号",
+            str(len(design_signals)),
+            f"新概念、架构或标准 · 已实践 {practiced_points}",
+            "warn" if design_signals else "good",
         )
     with cols[3]:
         profile_detail = (
@@ -190,6 +224,40 @@ def render() -> None:
             f"{failed} 条失败 · {profile_detail}",
             "warn" if pending else "good",
         )
+
+    st.markdown('<div class="section-heading">新设计信号</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-caption">优先展示会改变设计方式的新概念、架构与标准；常规版本更新仍保留在收件箱。</div>',
+        unsafe_allow_html=True,
+    )
+    if not design_signals:
+        st.info("近期还没有识别到设计信号。运行情报更新后会持续检查官方工程文章和规范变更。")
+    else:
+        signal_columns = st.columns(2)
+        for index, item in enumerate(design_signals[:6]):
+            with signal_columns[index % 2]:
+                confirmation = (
+                    f" · {item['source_count']} 个来源确认"
+                    if item["source_count"] >= 2
+                    else ""
+                )
+                st.markdown(
+                    f"""
+                    <div class="signal-card {escape(item['signal_type'].lower())}">
+                      <div class="signal-card-top">
+                        <span class="signal-kind">{escape(signal_type_label(item['signal_type']))}</span>
+                        <span class="signal-importance">重要度 {item['importance']}</span>
+                      </div>
+                      <div class="signal-title">{escape(item['title'])}</div>
+                      <div class="signal-meta">
+                        {escape(item['topic'])} · {escape(fmt_dt(item['first_seen']))}{escape(confirmation)}
+                      </div>
+                      <div class="signal-summary">{escape((item['summary'] or '')[:220])}</div>
+                      <div class="signal-action">下一步：{escape(signal_action_hint(item['signal_type']))}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
     left, right = st.columns([1.45, 1])
     with left:
@@ -210,7 +278,7 @@ def render() -> None:
                     {escape(gap['topic'])} · 重要度 {gap['importance']} · {escape(fmt_dt(gap['first_seen']))}
                   </div>
                   <span class="pill {level_class}">{escape(gap['level'])}</span>
-                  <span class="pill">建议：阅读来源并在 GPT 中形成研究或实践记录</span>
+                  <span class="pill">建议：{escape(signal_action_hint(gap.get('signal_type', 'RELEASE')))}</span>
                   <div class="card-detail" style="margin-top:.65rem">{escape((gap['summary'] or '')[:180])}</div>
                 </div>
                 """,

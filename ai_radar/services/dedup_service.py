@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ai_radar.bootstrap import STATUS_ACTIVE
+from ai_radar.bootstrap import SIGNAL_PRIORITY
 from ai_radar.models import ChangePoint, ChangePointSource, SourceItem
 from ai_radar.utils import to_utc
 
@@ -37,6 +38,7 @@ class DedupService:
         occurred_at: datetime | None,
         source_item_id: int,
         duplicate_keywords: list[str],
+        signal_type: str = "RELEASE",
     ) -> ChangePoint:
         """Return an existing ACTIVE change point for this event, or create one.
 
@@ -63,6 +65,7 @@ class DedupService:
                 summary=summary,
                 why_it_matters=why_it_matters,
                 importance=importance,
+                signal_type=signal_type,
                 occurred_at=occurred_at,
                 status=STATUS_ACTIVE,
             )
@@ -74,6 +77,11 @@ class DedupService:
             # summary text if the new one is meaningfully different.
             if importance > existing.importance:
                 existing.importance = importance
+            if SIGNAL_PRIORITY.get(signal_type, 0) > SIGNAL_PRIORITY.get(
+                existing.signal_type,
+                0,
+            ):
+                existing.signal_type = signal_type
             if title and not existing.title:
                 existing.title = title
             if why_it_matters and not existing.why_it_matters:
@@ -187,6 +195,11 @@ class DedupService:
         # Promote importance / fill missing fields on target.
         if source.importance > target.importance:
             target.importance = source.importance
+        if SIGNAL_PRIORITY.get(source.signal_type, 0) > SIGNAL_PRIORITY.get(
+            target.signal_type,
+            0,
+        ):
+            target.signal_type = source.signal_type
         for attr in ("title", "summary", "why_it_matters"):
             src_val = getattr(source, attr) or ""
             tgt_val = getattr(target, attr) or ""
