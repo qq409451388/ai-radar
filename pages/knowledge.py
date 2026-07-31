@@ -31,6 +31,34 @@ LEVEL_LABEL = {
     "PRACTICED": "已实践",
 }
 
+SIGNAL_GROUPS = [
+    (
+        "STANDARD",
+        "标准 / 协议",
+        "开放标准、协议与互操作规范。优先确认兼容性、采用范围和迁移影响。",
+    ),
+    (
+        "ARCHITECTURE",
+        "架构设计",
+        "会改变系统组织方式的架构与设计模式。重点理解它解决的旧问题和核心机制。",
+    ),
+    (
+        "CONCEPT",
+        "新概念",
+        "值得建立独立认知的新抽象、术语与方法论。先确认定义、边界和真实案例。",
+    ),
+    (
+        "CAPABILITY",
+        "新能力",
+        "模型或产品获得的新能力。适合通过最小任务验证效果、限制和成本。",
+    ),
+    (
+        "RELEASE",
+        "版本动态",
+        "常规发布、升级、修复和体验变化。保留追溯，但不与设计信号混排。",
+    ),
+]
+
 
 def render() -> None:
     st.markdown('<div class="page-kicker">Knowledge map</div>', unsafe_allow_html=True)
@@ -124,135 +152,214 @@ def render() -> None:
         for col, level in zip(metrics, LEVEL_LABEL):
             col.metric(LEVEL_LABEL[level], level_counts[level])
 
-        st.caption(f"当前筛选下共 {len(cps)} 个活跃知识变化点")
+        st.caption(
+            f"当前筛选 {len(cps)} 条活跃知识变化点 · "
+            "已按信号类型分组，组内按领域归档"
+        )
         if not cps:
             st.info("没有符合条件的知识点。可以先去“情报收件箱”分析一批资讯。")
-
-        for cp in cps:
-            cov = latest_coverage(session, cp.id)
-            level = cov.coverage_level if cov else "NONE"
-            with st.expander(
-                f"{'●' if cp.importance == 5 else '◆' if cp.importance == 3 else '·'} "
-                f"{cp.title} · {LEVEL_LABEL[level]}"
+        if cps:
+            visible_groups = [
+                group
+                for group in SIGNAL_GROUPS
+                if selected_signal is None or group[0] == selected_signal
+            ]
+            grouped = {
+                signal_type: [
+                    cp for cp in cps if cp.signal_type == signal_type
+                ]
+                for signal_type, _, _ in visible_groups
+            }
+            labels = [
+                f"{label} · {len(grouped[signal_type])}"
+                for signal_type, label, _ in visible_groups
+            ]
+            default_label = next(
+                (
+                    label
+                    for label, (signal_type, _, _) in zip(labels, visible_groups)
+                    if grouped[signal_type]
+                ),
+                labels[0],
+            )
+            group_tabs = st.tabs(
+                labels,
+                default=default_label,
+                key="knowledge_signal_groups",
+            )
+            for tab, (signal_type, _, description) in zip(
+                group_tabs,
+                visible_groups,
             ):
-                meta_cols = st.columns([2.1, 1.1, 1, 1, 1])
-                meta_cols[0].caption(topic_names.get(cp.topic_id, "未分类"))
-                meta_cols[1].caption(signal_type_label(cp.signal_type))
-                meta_cols[2].caption(f"重要度 {cp.importance}")
-                meta_cols[3].caption(f"发现 {fmt_dt(cp.first_seen_at)}")
-                meta_cols[4].markdown(
-                    f'<span class="pill {level.lower()}">{LEVEL_LABEL[level]}</span>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown("#### 发生了什么")
-                st.write(cp.summary or "暂无摘要")
-                if cp.why_it_matters:
-                    st.info(cp.why_it_matters, icon="💡")
-
-                evidence_tab, history_tab, source_tab, manage_tab = st.tabs(
-                    ["当前判断", "进展历史", "官方来源", "管理"]
-                )
-                with evidence_tab:
-                    if cov is None:
-                        st.warning("尚未评估。完成记忆同步后可手动评估。")
-                    else:
-                        st.markdown(
-                            f"**{LEVEL_LABEL[cov.coverage_level]}** · "
-                            f"置信度 {cov.confidence:.0%} · "
-                            f"评估模型 {cov.model_name or '规则'}"
-                        )
-                        st.write(cov.rationale or "暂无判断说明")
-                        matched_ids = load_json(cov.matched_fact_ids_json, [])
-                        if matched_ids:
-                            st.markdown("**匹配到的个人事实**")
-                            for fact_id in matched_ids:
-                                fact = session.get(ProfileFact, int(fact_id))
-                                if not fact:
-                                    continue
-                                source_file = session.get(
-                                    ProfileSourceFile, fact.source_file_id
-                                )
-                                st.markdown(f"- {fact.fact_text}")
-                                st.caption(
-                                    f"{fact.evidence_type} · "
-                                    f"{source_file.file_path if source_file else '未知文件'}:"
-                                    f"{fact.source_line_start}-{fact.source_line_end}"
-                                )
-                        else:
-                            st.caption("没有可验证的个人事实，因此不会计入覆盖分数。")
-                    if st.button(
-                        "用最新记忆重新评估",
-                        key=f"assess_cp_{cp.id}",
-                        width="content",
-                    ):
-                        reassess_id = cp.id
-
-                with history_tab:
-                    history = list(
-                        session.execute(
-                            select(KnowledgeCoverage)
-                            .where(KnowledgeCoverage.change_point_id == cp.id)
-                            .order_by(KnowledgeCoverage.assessed_at.desc())
-                        ).scalars()
+                with tab:
+                    group_items = grouped[signal_type]
+                    st.markdown(
+                        f'<div class="signal-group-intro">{escape(description)}</div>',
+                        unsafe_allow_html=True,
                     )
-                    if not history:
-                        st.caption("尚无评估历史")
-                    for row in history:
+                    if not group_items:
+                        st.info("当前筛选条件下，这一类还没有知识变化点。")
+                        continue
+
+                    items_by_topic: dict[str, list[ChangePoint]] = {}
+                    for cp in group_items:
+                        topic_name = topic_names.get(cp.topic_id, "未分类")
+                        items_by_topic.setdefault(topic_name, []).append(cp)
+
+                    for topic_name, topic_items in items_by_topic.items():
                         st.markdown(
-                            f"**{LEVEL_LABEL[row.coverage_level]}** · "
-                            f"{fmt_dt(row.assessed_at)}"
+                            f"""
+                            <div class="signal-topic-heading">
+                              <span>{escape(topic_name)}</span>
+                              <small>{len(topic_items)} 条</small>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
                         )
-                        st.caption(
-                            f"触发：{row.trigger_type} · 置信度 {row.confidence:.0%}"
-                        )
-
-                with source_tab:
-                    sources = sources_for_change_point(session, cp.id)
-                    for item in sources:
-                        st.markdown(f"- [{item.title or item.url}]({item.url})")
-                        st.caption(
-                            f"发布 {fmt_dt(item.published_at)} · {item.author or '官方'}"
-                        )
-                    if not sources:
-                        st.caption("暂无关联来源")
-
-                with manage_tab:
-                    with st.form(f"manage_cp_{cp.id}"):
-                        new_importance = st.select_slider(
-                            "重要度", options=[1, 3, 5], value=cp.importance
-                        )
-                        signal_options = [
-                            "STANDARD",
-                            "ARCHITECTURE",
-                            "CONCEPT",
-                            "CAPABILITY",
-                            "RELEASE",
-                        ]
-                        new_signal_type = st.selectbox(
-                            "信号类型",
-                            signal_options,
-                            index=signal_options.index(cp.signal_type)
-                            if cp.signal_type in signal_options
-                            else len(signal_options) - 1,
-                            format_func=signal_type_label,
-                        )
-                        new_status = st.selectbox(
-                            "状态",
-                            ["ACTIVE", "DEPRECATED"],
-                            index=0 if cp.status == "ACTIVE" else 1,
-                        )
-                        if st.form_submit_button("保存调整"):
-                            cp.importance = new_importance
-                            cp.signal_type = new_signal_type
-                            cp.status = new_status
-                            st.success("已保存。该调整会影响后续评分。")
-                st.caption(f"event_key · {escape(cp.event_key)}")
+                        for cp in topic_items:
+                            selected_id = _render_change_point(
+                                session,
+                                cp,
+                                topic_names,
+                            )
+                            if selected_id is not None:
+                                reassess_id = selected_id
 
     if reassess_id is not None:
         with st.spinner("正在用最新个人事实重新评估…"):
             result = orchestrator.assess_change_point(reassess_id)
         st.success(f"评估完成：{LEVEL_LABEL[result['coverage_level']]}")
         st.rerun()
+
+
+def _render_change_point(
+    session,
+    cp: ChangePoint,
+    topic_names: dict[int, str],
+) -> int | None:
+    cov = latest_coverage(session, cp.id)
+    level = cov.coverage_level if cov else "NONE"
+    selected_id: int | None = None
+    with st.expander(
+        f"{'●' if cp.importance == 5 else '◆' if cp.importance == 3 else '·'} "
+        f"{cp.title} · {LEVEL_LABEL[level]}"
+    ):
+        meta_cols = st.columns([2.1, 1.1, 1, 1, 1])
+        meta_cols[0].caption(topic_names.get(cp.topic_id, "未分类"))
+        meta_cols[1].caption(signal_type_label(cp.signal_type))
+        meta_cols[2].caption(f"重要度 {cp.importance}")
+        meta_cols[3].caption(f"发现 {fmt_dt(cp.first_seen_at)}")
+        meta_cols[4].markdown(
+            f'<span class="pill {level.lower()}">{LEVEL_LABEL[level]}</span>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("#### 发生了什么")
+        st.write(cp.summary or "暂无摘要")
+        if cp.why_it_matters:
+            st.info(cp.why_it_matters, icon="💡")
+
+        evidence_tab, history_tab, source_tab, manage_tab = st.tabs(
+            ["当前判断", "进展历史", "官方来源", "管理"]
+        )
+        with evidence_tab:
+            if cov is None:
+                st.warning("尚未评估。完成记忆同步后可手动评估。")
+            else:
+                st.markdown(
+                    f"**{LEVEL_LABEL[cov.coverage_level]}** · "
+                    f"置信度 {cov.confidence:.0%} · "
+                    f"评估模型 {cov.model_name or '规则'}"
+                )
+                st.write(cov.rationale or "暂无判断说明")
+                matched_ids = load_json(cov.matched_fact_ids_json, [])
+                if matched_ids:
+                    st.markdown("**匹配到的个人事实**")
+                    for fact_id in matched_ids:
+                        fact = session.get(ProfileFact, int(fact_id))
+                        if not fact:
+                            continue
+                        source_file = session.get(
+                            ProfileSourceFile,
+                            fact.source_file_id,
+                        )
+                        st.markdown(f"- {fact.fact_text}")
+                        st.caption(
+                            f"{fact.evidence_type} · "
+                            f"{source_file.file_path if source_file else '未知文件'}:"
+                            f"{fact.source_line_start}-{fact.source_line_end}"
+                        )
+                else:
+                    st.caption("没有可验证的个人事实，因此不会计入覆盖分数。")
+            if st.button(
+                "用最新记忆重新评估",
+                key=f"assess_cp_{cp.id}",
+                width="content",
+            ):
+                selected_id = cp.id
+
+        with history_tab:
+            history = list(
+                session.execute(
+                    select(KnowledgeCoverage)
+                    .where(KnowledgeCoverage.change_point_id == cp.id)
+                    .order_by(KnowledgeCoverage.assessed_at.desc())
+                ).scalars()
+            )
+            if not history:
+                st.caption("尚无评估历史")
+            for row in history:
+                st.markdown(
+                    f"**{LEVEL_LABEL[row.coverage_level]}** · "
+                    f"{fmt_dt(row.assessed_at)}"
+                )
+                st.caption(
+                    f"触发：{row.trigger_type} · 置信度 {row.confidence:.0%}"
+                )
+
+        with source_tab:
+            sources = sources_for_change_point(session, cp.id)
+            for item in sources:
+                st.markdown(f"- [{item.title or item.url}]({item.url})")
+                st.caption(
+                    f"发布 {fmt_dt(item.published_at)} · {item.author or '官方'}"
+                )
+            if not sources:
+                st.caption("暂无关联来源")
+
+        with manage_tab:
+            with st.form(f"manage_cp_{cp.id}"):
+                new_importance = st.select_slider(
+                    "重要度",
+                    options=[1, 3, 5],
+                    value=cp.importance,
+                )
+                signal_options = [
+                    "STANDARD",
+                    "ARCHITECTURE",
+                    "CONCEPT",
+                    "CAPABILITY",
+                    "RELEASE",
+                ]
+                new_signal_type = st.selectbox(
+                    "信号类型",
+                    signal_options,
+                    index=signal_options.index(cp.signal_type)
+                    if cp.signal_type in signal_options
+                    else len(signal_options) - 1,
+                    format_func=signal_type_label,
+                )
+                new_status = st.selectbox(
+                    "状态",
+                    ["ACTIVE", "DEPRECATED"],
+                    index=0 if cp.status == "ACTIVE" else 1,
+                )
+                if st.form_submit_button("保存调整"):
+                    cp.importance = new_importance
+                    cp.signal_type = new_signal_type
+                    cp.status = new_status
+                    st.success("已保存。该调整会影响后续评分。")
+        st.caption(f"event_key · {escape(cp.event_key)}")
+    return selected_id
 
 
 render()

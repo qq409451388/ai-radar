@@ -245,6 +245,22 @@ def inject_app_styles() -> None:
           color:#42685d; background:#edf8f4; border-radius:.55rem;
           padding:.48rem .58rem; font-size:.7rem; font-weight:650; margin-top:.7rem;
         }
+        .signal-group-intro {
+          color:var(--radar-muted); background:var(--radar-soft);
+          border-left:3px solid var(--radar-accent); border-radius:.45rem;
+          padding:.68rem .8rem; font-size:.76rem; line-height:1.55;
+          margin:.7rem 0 1rem;
+        }
+        .signal-topic-heading {
+          display:flex; align-items:center; justify-content:space-between;
+          color:var(--radar-ink); font-size:.86rem; font-weight:740;
+          padding:.9rem .15rem .42rem; margin-top:.3rem;
+          border-bottom:1px solid var(--radar-line);
+        }
+        .signal-topic-heading small {
+          color:var(--radar-muted); font-size:.67rem; font-weight:650;
+          background:var(--radar-soft); border-radius:99px; padding:.15rem .45rem;
+        }
         .priority-card.critical { border-left:4px solid var(--radar-bad); }
         .priority-card.watch { border-left:4px solid var(--radar-warn); }
         .priority-title { font-size:.94rem; font-weight:700; color:var(--radar-ink); }

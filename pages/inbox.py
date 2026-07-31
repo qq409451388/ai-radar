@@ -118,11 +118,12 @@ def render() -> None:
 
 
 def _render_changes(design_only: bool = False) -> None:
+    view_key = "design" if design_only else "all"
     range_label = st.segmented_control(
         "时间范围",
         ["7 天", "30 天", "全部"],
         default="30 天",
-        key="inbox_change_range",
+        key=f"inbox_change_range_{view_key}",
     )
     days = {"7 天": 7, "30 天": 30}.get(range_label)
     with session_scope() as session:
